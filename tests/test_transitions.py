@@ -9,7 +9,6 @@ from livekit.agents import ChatContext
 
 from src.agents import IntroductionAgent, PastExperienceAgent
 from src.data import InterviewData
-import src.config as config
 
 
 class TestFallbackTimer:

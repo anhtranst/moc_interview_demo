@@ -1,0 +1,26 @@
+.form {
+  display: flex;
+  gap: 8px;
+  flex: 1;
+}
+
+.input {
+  flex: 1;
+  min-width: 0;
+}
+
+.sendBtn {
+  background: var(--primary);
+  color: white;
+  padding: 10px 20px;
+  flex-shrink: 0;
+}
+
+.sendBtn:hover:not(:disabled) {
+  background: var(--primary-hover);
+}
+
+.sendBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

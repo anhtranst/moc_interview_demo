@@ -1,4 +1,5 @@
 import logging
+import sys
 
 from dotenv import load_dotenv
 
@@ -7,6 +8,7 @@ from livekit.agents.voice import MetricsCollectedEvent
 from livekit.plugins import google, openai, silero
 
 from .agents import IntroductionAgent
+from .config import MAX_COMPLETION_TOKENS
 from .data import InterviewData
 
 load_dotenv()
@@ -27,7 +29,7 @@ async def entrypoint(ctx: JobContext) -> None:
     session = AgentSession[InterviewData](
         vad=ctx.proc.userdata["vad"],
         stt=google.STT(),
-        llm=openai.LLM(model="gpt-4.1-mini"),
+        llm=openai.LLM(model="gpt-4.1-mini", max_completion_tokens=MAX_COMPLETION_TOKENS),
         tts=google.TTS(model_name="chirp_3"),
         userdata=InterviewData(),
     )
@@ -51,5 +53,18 @@ async def entrypoint(ctx: JobContext) -> None:
     )
 
 
+def _run_serve() -> None:
+    """Start the FastAPI token server with uvicorn."""
+    import uvicorn
+
+    print("Starting token server on http://localhost:8000")
+    print("  POST /api/token — generate LiveKit room token")
+    print("  Frontend served from frontend/dist/ (if built)")
+    uvicorn.run("src.server:app", host="0.0.0.0", port=8000, reload=True)
+
+
 if __name__ == "__main__":
-    cli.run_app(server)
+    if len(sys.argv) > 1 and sys.argv[1] == "serve":
+        _run_serve()
+    else:
+        cli.run_app(server)

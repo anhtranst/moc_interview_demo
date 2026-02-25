@@ -1,13 +1,30 @@
 import asyncio
 import logging
 
-from livekit.agents import Agent, ChatContext, RunContext
-from livekit.agents.llm import function_tool
+from livekit.agents import Agent, ChatContext, RunContext, StopResponse
+from livekit.agents.llm import ChatMessage, function_tool
 
-from .config import INTRODUCTION_FALLBACK_TIMEOUT
+from .config import (
+    INTRODUCTION_FALLBACK_TIMEOUT,
+    PAUSE_KEYWORDS,
+    RESUME_KEYWORDS,
+    STOP_KEYWORDS,
+)
 from .data import InterviewData
 
 logger = logging.getLogger("mock-interview")
+
+# Shared conversation rules injected into every agent's instructions.
+CONVERSATION_RULES = (
+    "\n\nIMPORTANT conversation rules you MUST follow:\n"
+    "- Keep each response to 1-3 sentences maximum. Ask only one question at a time.\n"
+    "- Speak as a real interviewer would — brief, warm, and conversational.\n"
+    "- If the candidate says something vague or incomplete, ask them to elaborate "
+    "rather than treating it as a full answer.\n"
+    "- If the candidate asks you to repeat something, slow down, or makes any "
+    "non-interview request, respond to that request naturally before continuing.\n"
+    "- Never produce long paragraphs or multiple questions in a single response."
+)
 
 INTRODUCTION_INSTRUCTIONS = (
     "You are a professional interviewer conducting a mock interview. "
@@ -20,7 +37,7 @@ INTRODUCTION_INSTRUCTIONS = (
     "call the proceed_to_experience tool to move to the next stage. "
     "Do NOT call the tool prematurely -- wait until the candidate has "
     "finished their introduction."
-)
+) + CONVERSATION_RULES
 
 EXPERIENCE_INSTRUCTIONS = (
     "You are a professional interviewer conducting a mock interview. "
@@ -32,10 +49,63 @@ EXPERIENCE_INSTRUCTIONS = (
     "Be conversational and encouraging. "
     "When the candidate has discussed their experience sufficiently "
     "(at least 2-3 exchanges), call the end_interview tool to wrap up."
-)
+) + CONVERSATION_RULES
 
 
-class IntroductionAgent(Agent):
+def _matches_keywords(text: str, keywords: set[str]) -> bool:
+    """Check if normalized text matches any keyword (case-insensitive substring)."""
+    normalized = text.strip().lower()
+    return any(kw in normalized for kw in keywords)
+
+
+class InterviewAgentBase(Agent):
+    """Base class for all interview agents with shared flow-control logic.
+
+    Handles deterministic command detection (stop/pause/resume) in
+    ``on_user_turn_completed`` before the LLM sees the message.
+    """
+
+    async def on_user_turn_completed(
+        self, turn_ctx: ChatContext, new_message: ChatMessage
+    ) -> None:
+        text = new_message.text_content or ""
+        userdata: InterviewData = self.session.userdata
+
+        # --- Resume from pause ---
+        if userdata.is_paused:
+            if _matches_keywords(text, RESUME_KEYWORDS):
+                userdata.is_paused = False
+                logger.info("Interview resumed by user")
+                self.session.generate_reply(
+                    instructions="The candidate is ready to continue. "
+                    "Pick up where you left off with a brief acknowledgment."
+                )
+            # While paused, suppress all LLM responses.
+            raise StopResponse()
+
+        # --- Hard stop ---
+        if _matches_keywords(text, STOP_KEYWORDS):
+            logger.info("User requested to stop the interview")
+            name = userdata.candidate_name or "candidate"
+            self.session.generate_reply(
+                instructions=f"The candidate has asked to stop. "
+                f"Thank {name} for their time and end the interview warmly.",
+                allow_interruptions=False,
+            )
+            raise StopResponse()
+
+        # --- Pause ---
+        if _matches_keywords(text, PAUSE_KEYWORDS):
+            userdata.is_paused = True
+            logger.info("Interview paused by user")
+            self.session.generate_reply(
+                instructions="The candidate needs a moment. "
+                "Acknowledge briefly and let them know you'll wait."
+            )
+            raise StopResponse()
+
+
+class IntroductionAgent(InterviewAgentBase):
     def __init__(self, *, chat_ctx: ChatContext | None = None) -> None:
         super().__init__(
             instructions=INTRODUCTION_INSTRUCTIONS,
@@ -93,8 +163,13 @@ class IntroductionAgent(Agent):
 
         return PastExperienceAgent(chat_ctx=self.chat_ctx)
 
+    async def on_user_turn_completed(
+        self, turn_ctx: ChatContext, new_message: ChatMessage
+    ) -> None:
+        await super().on_user_turn_completed(turn_ctx, new_message)
 
-class PastExperienceAgent(Agent):
+
+class PastExperienceAgent(InterviewAgentBase):
     def __init__(self, *, chat_ctx: ChatContext | None = None) -> None:
         super().__init__(
             instructions=EXPERIENCE_INSTRUCTIONS,
@@ -133,3 +208,8 @@ class PastExperienceAgent(Agent):
             instructions=f"Thank {name} for their time and end the interview warmly.",
             allow_interruptions=False,
         )
+
+    async def on_user_turn_completed(
+        self, turn_ctx: ChatContext, new_message: ChatMessage
+    ) -> None:
+        await super().on_user_turn_completed(turn_ctx, new_message)
