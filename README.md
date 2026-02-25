@@ -34,9 +34,15 @@ flowchart TD
     L -->|on_enter| M[Asks about past experience via TTS]
     M --> N{Discussion continues}
     N -->|LLM calls end_interview| O[Goodbye & session close]
-    N -->|User clicks End Interview| P[Confirmation modal + TTS warning]
+
+    H -->|User clicks End Interview| P[Confirmation modal + TTS warning]
+    N -->|User clicks End Interview| P
     P -->|Just Pause| Q[Interview paused]
     P -->|Yes, End| O
+    Q -->|User sends 'resume'| R{Return to current stage}
+    R --> H
+    R --> N
+    Q -->|User clicks End Interview again| P
 ```
 
 ### Input Flow
