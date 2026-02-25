@@ -1,13 +1,13 @@
 # AI Mock Interview Demo
 
-A multi-stage interview agent built on the [LiveKit Agents](https://github.com/livekit/agents) framework, with a React web frontend. The agent conducts a mock interview with two stages — **self-introduction** and **past experience** — featuring smooth transitions, flow control, and a time-based fallback mechanism.
+A multi-stage interview agent built on the [LiveKit Agents](https://github.com/livekit/agents) framework, with a React web frontend. The agent conducts a mock interview with two stages — **self-introduction** and **past experience** — featuring smooth transitions and a time-based fallback mechanism.
 
 ## Features
 
 - **Two-stage interview flow**: Self-introduction followed by past-experience discussion
 - **Smart transitions**: LLM-driven tool calls trigger natural stage transitions
 - **Fallback mechanism**: Time-based fallback ensures the interview progresses even if the normal transition logic isn't triggered
-- **Flow control**: Users can stop, pause, and resume the interview via keywords or the End Interview button
+- **End Interview button**: Users can end the interview at any time via a confirmation dialog
 - **Response brevity**: Agent responses are limited to 1-3 sentences via prompt rules and `max_completion_tokens`
 - **Web frontend**: React app with browser-based speech recognition, editable text input, and transcript panel
 - **Conversation continuity**: Full chat history is preserved across stage transitions
@@ -35,14 +35,14 @@ flowchart TD
     M --> N{Discussion continues}
     N -->|LLM calls end_interview| O[Goodbye & session close]
 
-    F -->|User clicks End Interview| P[Confirmation modal + TTS warning]
+    F -->|User clicks End Interview| P[Confirmation modal]
     H -->|User clicks End Interview| P
     M -->|User clicks End Interview| P
     N -->|User clicks End Interview| P
-    P -->|Pause & Resume| F
-    P -->|Pause & Resume| H
-    P -->|Pause & Resume| M
-    P -->|Pause & Resume| N
+    P -->|Cancel| F
+    P -->|Cancel| H
+    P -->|Cancel| M
+    P -->|Cancel| N
     P -->|Yes, End| O
 ```
 
@@ -64,7 +64,7 @@ sequenceDiagram
     U->>TI: Click Send
     TI->>LK: sendText(text, topic="lk.chat")
     LK->>A: Text stream received
-    A->>A: on_user_turn_completed (keyword check)
+    A->>A: on_user_turn_completed
     A->>A: LLM generates response
     A->>LK: TTS audio stream
     LK->>U: RoomAudioRenderer plays audio
@@ -109,7 +109,7 @@ mock_interview_demo/
 │   ├── main.py          # Application entrypoint (AgentServer + CLI + serve command)
 │   ├── agents.py         # InterviewAgentBase, IntroductionAgent, PastExperienceAgent
 │   ├── data.py           # InterviewData dataclass (shared state)
-│   ├── config.py         # Configurable constants (timeouts, token limits, keywords)
+│   ├── config.py         # Configurable constants (timeouts, token limits)
 │   └── server.py         # FastAPI token server (POST /api/token)
 ├── frontend/
 │   ├── src/
@@ -208,11 +208,7 @@ Then open `http://localhost:5173` in your browser.
 
 ### InterviewAgentBase
 
-All interview agents inherit from `InterviewAgentBase`, which provides deterministic flow control via `on_user_turn_completed()`. Before the LLM sees any message, keywords are checked:
-
-- **Stop keywords** (`stop`, `quit`, `end interview`, `exit`): Agent wraps up gracefully.
-- **Pause keywords** (`pause`, `wait`, `hold on`, etc.): Agent acknowledges and waits. All turns suppressed.
-- **Resume keywords** (`resume`, `continue`, `go ahead`, etc.): Agent picks up where it left off.
+All interview agents inherit from `InterviewAgentBase`, which handles the **End Interview** command sent by the frontend button. When the user confirms ending, the frontend sends `"end interview"` via `lk.chat`. The base class detects this exact text in `on_user_turn_completed()`, generates a goodbye message via TTS, and suppresses further LLM processing.
 
 ### IntroductionAgent
 
@@ -237,7 +233,7 @@ The React frontend connects to the LiveKit room but does **not** send microphone
 2. Transcribed text appears in the **TextInput** for review and editing.
 3. The user clicks **Send** to transmit text via `lk.chat` to the agent.
 4. The agent responds via TTS, which plays through `RoomAudioRenderer`.
-5. The **End Interview** button shows a confirmation modal suggesting pause as an alternative, and speaks a TTS warning before wrapping up.
+5. The **End Interview** button shows a confirmation modal. If the user confirms, `"end interview"` is sent to the agent, which triggers a goodbye message via TTS.
 
 ### Shared State
 
@@ -248,7 +244,6 @@ Both agents share an `InterviewData` dataclass via `AgentSession.userdata`:
 | `candidate_name` | `str \| None` | Candidate's name, extracted during introduction |
 | `introduction_summary` | `str \| None` | Brief summary of the candidate's introduction |
 | `transition_source` | `str \| None` | `"tool"` or `"fallback"` — how the transition occurred |
-| `is_paused` | `bool` | Whether the interview is currently paused |
 
 ## Configuration
 
@@ -258,9 +253,6 @@ Configurable constants in `src/config.py`:
 |----------|---------|-------------|
 | `INTRODUCTION_FALLBACK_TIMEOUT` | `120.0` | Seconds before fallback forces transition from introduction to experience stage |
 | `MAX_COMPLETION_TOKENS` | `150` | Hard ceiling on LLM response length (~2-3 sentences) |
-| `STOP_KEYWORDS` | `{"stop", "quit", "end interview", "exit"}` | Keywords that end the interview |
-| `PAUSE_KEYWORDS` | `{"pause", "wait", "hold on", ...}` | Keywords that pause the interview |
-| `RESUME_KEYWORDS` | `{"resume", "continue", "go ahead", ...}` | Keywords that resume from pause |
 
 ## Testing
 
@@ -282,7 +274,7 @@ Configurable constants in `src/config.py`:
 
 | Test File | What It Tests |
 |-----------|---------------|
-| `test_agents.py` | Agent construction, instructions, tool registration, keyword matching, conversation rules, config values |
+| `test_agents.py` | Agent construction, instructions, tool registration, end-interview detection, conversation rules, config values |
 | `test_transitions.py` | Fallback timer behavior, chat context inheritance, userdata persistence |
 
 ## Technology Stack

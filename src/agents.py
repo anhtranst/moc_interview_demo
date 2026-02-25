@@ -4,12 +4,7 @@ import logging
 from livekit.agents import Agent, ChatContext, RunContext, StopResponse
 from livekit.agents.llm import ChatMessage, function_tool
 
-from .config import (
-    INTRODUCTION_FALLBACK_TIMEOUT,
-    PAUSE_KEYWORDS,
-    RESUME_KEYWORDS,
-    STOP_KEYWORDS,
-)
+from .config import INTRODUCTION_FALLBACK_TIMEOUT
 from .data import InterviewData
 
 logger = logging.getLogger("mock-interview")
@@ -52,55 +47,30 @@ EXPERIENCE_INSTRUCTIONS = (
 ) + CONVERSATION_RULES
 
 
-def _matches_keywords(text: str, keywords: set[str]) -> bool:
-    """Check if normalized text matches any keyword (case-insensitive substring)."""
-    normalized = text.strip().lower()
-    return any(kw in normalized for kw in keywords)
+# Exact text sent by the frontend End Interview button after user confirms.
+_END_INTERVIEW_TEXT = "end interview"
 
 
 class InterviewAgentBase(Agent):
-    """Base class for all interview agents with shared flow-control logic.
+    """Base class for all interview agents with shared conversation rules.
 
-    Handles deterministic command detection (stop/pause/resume) in
-    ``on_user_turn_completed`` before the LLM sees the message.
+    Handles the deterministic "end interview" command sent by the frontend
+    End Interview button in ``on_user_turn_completed``.
     """
 
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage
     ) -> None:
-        text = new_message.text_content or ""
-        userdata: InterviewData = self.session.userdata
+        text = (new_message.text_content or "").strip().lower()
 
-        # --- Resume from pause ---
-        if userdata.is_paused:
-            if _matches_keywords(text, RESUME_KEYWORDS):
-                userdata.is_paused = False
-                logger.info("Interview resumed by user")
-                self.session.generate_reply(
-                    instructions="The candidate is ready to continue. "
-                    "Pick up where you left off with a brief acknowledgment."
-                )
-            # While paused, suppress all LLM responses.
-            raise StopResponse()
-
-        # --- Hard stop ---
-        if _matches_keywords(text, STOP_KEYWORDS):
-            logger.info("User requested to stop the interview")
+        if text == _END_INTERVIEW_TEXT:
+            logger.info("User ended the interview via button")
+            userdata: InterviewData = self.session.userdata
             name = userdata.candidate_name or "candidate"
             self.session.generate_reply(
-                instructions=f"The candidate has asked to stop. "
+                instructions=f"The candidate has decided to end the interview. "
                 f"Thank {name} for their time and end the interview warmly.",
                 allow_interruptions=False,
-            )
-            raise StopResponse()
-
-        # --- Pause ---
-        if _matches_keywords(text, PAUSE_KEYWORDS):
-            userdata.is_paused = True
-            logger.info("Interview paused by user")
-            self.session.generate_reply(
-                instructions="The candidate needs a moment. "
-                "Acknowledge briefly and let them know you'll wait."
             )
             raise StopResponse()
 
@@ -163,10 +133,6 @@ class IntroductionAgent(InterviewAgentBase):
 
         return PastExperienceAgent(chat_ctx=self.chat_ctx)
 
-    async def on_user_turn_completed(
-        self, turn_ctx: ChatContext, new_message: ChatMessage
-    ) -> None:
-        await super().on_user_turn_completed(turn_ctx, new_message)
 
 
 class PastExperienceAgent(InterviewAgentBase):
@@ -209,7 +175,3 @@ class PastExperienceAgent(InterviewAgentBase):
             allow_interruptions=False,
         )
 
-    async def on_user_turn_completed(
-        self, turn_ctx: ChatContext, new_message: ChatMessage
-    ) -> None:
-        await super().on_user_turn_completed(turn_ctx, new_message)

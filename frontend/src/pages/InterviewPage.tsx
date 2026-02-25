@@ -124,27 +124,9 @@ function InterviewRoom() {
   }, []);
 
   // --- End Interview confirmation flow ---
-  const handleEndInterviewClick = useCallback(async () => {
-    // Send a message so the agent speaks a warning via TTS
-    try {
-      await room.localParticipant.sendText(
-        "I'd like to end the interview",
-        { topic: "lk.chat" }
-      );
-    } catch {
-      // Room might not be connected; still show the modal
-    }
+  const handleEndInterviewClick = useCallback(() => {
     setShowEndModal(true);
-  }, [room]);
-
-  const handlePause = useCallback(async () => {
-    setShowEndModal(false);
-    try {
-      await room.localParticipant.sendText("pause", { topic: "lk.chat" });
-    } catch {
-      // ignore
-    }
-  }, [room]);
+  }, []);
 
   const handleConfirmEnd = useCallback(async () => {
     setShowEndModal(false);
@@ -205,7 +187,6 @@ function InterviewRoom() {
 
       <EndInterviewModal
         open={showEndModal}
-        onPause={handlePause}
         onConfirmEnd={handleConfirmEnd}
         onCancel={() => setShowEndModal(false)}
       />

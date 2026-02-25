@@ -1,0 +1,1 @@
+{"root":["./src/main.tsx","./src/vite-env.d.ts","./src/components/endinterviewmodal.tsx","./src/components/recordingcontrols.tsx","./src/components/textinput.tsx","./src/components/transcriptpanel.tsx","./src/lib/api.ts","./src/pages/interviewpage.tsx","./src/pages/lobbypage.tsx"],"version":"5.8.3"}

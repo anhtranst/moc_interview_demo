@@ -11,9 +11,9 @@ from src.agents import (
     InterviewAgentBase,
     IntroductionAgent,
     PastExperienceAgent,
-    _matches_keywords,
+    _END_INTERVIEW_TEXT,
 )
-from src.config import MAX_COMPLETION_TOKENS, PAUSE_KEYWORDS, RESUME_KEYWORDS, STOP_KEYWORDS
+from src.config import MAX_COMPLETION_TOKENS
 from src.data import InterviewData
 
 
@@ -87,10 +87,6 @@ class TestInterviewData:
         assert data.introduction_summary is None
         assert data.transition_source is None
 
-    def test_is_paused_defaults_to_false(self):
-        data = InterviewData()
-        assert data.is_paused is False
-
     def test_fields_are_settable(self):
         data = InterviewData()
         data.candidate_name = "Alice"
@@ -100,43 +96,13 @@ class TestInterviewData:
         assert data.introduction_summary == "Software engineer with 5 years experience"
         assert data.transition_source == "tool"
 
-    def test_pause_state_is_settable(self):
-        data = InterviewData()
-        data.is_paused = True
-        assert data.is_paused is True
 
+class TestEndInterviewText:
+    def test_end_interview_text_is_lowercase(self):
+        assert _END_INTERVIEW_TEXT == _END_INTERVIEW_TEXT.lower()
 
-class TestKeywordMatching:
-    @pytest.mark.parametrize("text", ["stop", "Stop", "STOP", "  stop  "])
-    def test_stop_keywords_match(self, text: str):
-        assert _matches_keywords(text, STOP_KEYWORDS)
-
-    @pytest.mark.parametrize("text", ["quit", "end interview", "exit"])
-    def test_other_stop_keywords(self, text: str):
-        assert _matches_keywords(text, STOP_KEYWORDS)
-
-    @pytest.mark.parametrize("text", ["pause", "wait", "hold on", "one moment"])
-    def test_pause_keywords_match(self, text: str):
-        assert _matches_keywords(text, PAUSE_KEYWORDS)
-
-    @pytest.mark.parametrize("text", ["resume", "continue", "go on", "go ahead", "i'm ready"])
-    def test_resume_keywords_match(self, text: str):
-        assert _matches_keywords(text, RESUME_KEYWORDS)
-
-    def test_normal_text_does_not_match_stop(self):
-        assert not _matches_keywords("I worked at Google for 3 years", STOP_KEYWORDS)
-
-    def test_normal_text_does_not_match_pause(self):
-        assert not _matches_keywords("My background is in software engineering", PAUSE_KEYWORDS)
-
-    def test_empty_text_does_not_match(self):
-        assert not _matches_keywords("", STOP_KEYWORDS)
-
-    def test_substring_match(self):
-        assert _matches_keywords("please wait for a moment", PAUSE_KEYWORDS)
-
-    def test_case_insensitive_substring(self):
-        assert _matches_keywords("Can you Hold On please?", PAUSE_KEYWORDS)
+    def test_end_interview_text_value(self):
+        assert _END_INTERVIEW_TEXT == "end interview"
 
 
 class TestConversationRules:
