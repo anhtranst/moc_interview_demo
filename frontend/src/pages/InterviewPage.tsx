@@ -1,10 +1,9 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 import {
   LiveKitRoom,
   RoomAudioRenderer,
   useConnectionState,
-  useLocalParticipant,
   useRoomContext,
 } from "@livekit/components-react";
 import {
@@ -13,9 +12,13 @@ import {
   type TranscriptionSegment,
   type Participant,
 } from "livekit-client";
-import { AudioControls } from "../components/AudioControls";
+import {
+  RecordingControls,
+  type RecordingControlsHandle,
+} from "../components/RecordingControls";
 import { TranscriptPanel } from "../components/TranscriptPanel";
 import { TextInput } from "../components/TextInput";
+import { EndInterviewModal } from "../components/EndInterviewModal";
 import styles from "./InterviewPage.module.css";
 
 interface LocationState {
@@ -46,7 +49,7 @@ export function InterviewPage() {
       serverUrl={state.livekitUrl}
       token={state.token}
       connect={true}
-      audio={true}
+      audio={false}
       className={styles.room}
     >
       <InterviewRoom />
@@ -58,31 +61,39 @@ function InterviewRoom() {
   const navigate = useNavigate();
   const room = useRoomContext();
   const connectionState = useConnectionState();
-  const { localParticipant } = useLocalParticipant();
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
+  const [draftText, setDraftText] = useState("");
+  const [showEndModal, setShowEndModal] = useState(false);
+  const recordingControlRef = useRef<RecordingControlsHandle | null>(null);
 
-  // Listen for transcription events from the LiveKit room.
-  // The agent pipeline automatically emits these for both user STT and agent TTS.
+  // Track seen segment IDs to deduplicate transcript entries.
+  const seenSegmentIds = useRef(new Set<string>());
+
   const handleTranscription = useCallback(
     (segments: TranscriptionSegment[], participant?: Participant) => {
-      const finalSegments = segments.filter((s) => s.final);
-      if (!finalSegments.length) return;
+      const newEntries: TranscriptEntry[] = [];
 
-      const text = finalSegments.map((s) => s.text).join(" ").trim();
-      if (!text) return;
+      for (const seg of segments) {
+        if (!seg.final) continue;
+        if (seenSegmentIds.current.has(seg.id)) continue;
+        seenSegmentIds.current.add(seg.id);
 
-      const isAgent = participant?.identity !== localParticipant.identity;
+        const text = seg.text.trim();
+        if (!text) continue;
 
-      setTranscripts((prev) => [
-        ...prev,
-        {
-          id: crypto.randomUUID(),
+        const isAgent = participant?.isAgent ?? false;
+        newEntries.push({
+          id: seg.id,
           speaker: isAgent ? "agent" : "user",
           text,
-        },
-      ]);
+        });
+      }
+
+      if (newEntries.length > 0) {
+        setTranscripts((prev) => [...prev, ...newEntries]);
+      }
     },
-    [localParticipant.identity]
+    []
   );
 
   useEffect(() => {
@@ -96,6 +107,56 @@ function InterviewRoom() {
     navigate("/");
   };
 
+  // Called after TextInput successfully sends a message.
+  const handleSent = useCallback((text: string) => {
+    setTranscripts((prev) => [
+      ...prev,
+      { id: crypto.randomUUID(), speaker: "user", text },
+    ]);
+    setDraftText("");
+    recordingControlRef.current?.reset();
+  }, []);
+
+  // When user manually types/edits in the textbox, auto-pause recording.
+  const handleDraftChange = useCallback((text: string) => {
+    setDraftText(text);
+    recordingControlRef.current?.pause();
+  }, []);
+
+  // --- End Interview confirmation flow ---
+  const handleEndInterviewClick = useCallback(async () => {
+    // Send a message so the agent speaks a warning via TTS
+    try {
+      await room.localParticipant.sendText(
+        "I'd like to end the interview",
+        { topic: "lk.chat" }
+      );
+    } catch {
+      // Room might not be connected; still show the modal
+    }
+    setShowEndModal(true);
+  }, [room]);
+
+  const handlePause = useCallback(async () => {
+    setShowEndModal(false);
+    try {
+      await room.localParticipant.sendText("pause", { topic: "lk.chat" });
+    } catch {
+      // ignore
+    }
+  }, [room]);
+
+  const handleConfirmEnd = useCallback(async () => {
+    setShowEndModal(false);
+    try {
+      await room.localParticipant.sendText("end interview", {
+        topic: "lk.chat",
+      });
+    } catch {
+      // ignore
+    }
+  }, [room]);
+
   const isConnected = connectionState === ConnectionState.Connected;
 
   return (
@@ -107,9 +168,18 @@ function InterviewRoom() {
             {isConnected ? "Connected" : connectionState}
           </span>
         </div>
-        <button className={styles.leaveBtn} onClick={handleLeave}>
-          Leave
-        </button>
+        <div className={styles.headerActions}>
+          <button
+            className={styles.endInterviewBtn}
+            onClick={handleEndInterviewClick}
+            disabled={!isConnected}
+          >
+            End Interview
+          </button>
+          <button className={styles.leaveBtn} onClick={handleLeave}>
+            Leave
+          </button>
+        </div>
       </header>
 
       <main className={styles.main}>
@@ -117,11 +187,28 @@ function InterviewRoom() {
       </main>
 
       <footer className={styles.footer}>
-        <AudioControls />
-        <TextInput disabled={!isConnected} />
+        <RecordingControls
+          onTranscript={setDraftText}
+          draftText={draftText}
+          controlRef={recordingControlRef}
+          disabled={!isConnected}
+        />
+        <TextInput
+          disabled={!isConnected}
+          draftText={draftText}
+          onDraftChange={handleDraftChange}
+          onSent={handleSent}
+        />
       </footer>
 
       <RoomAudioRenderer />
+
+      <EndInterviewModal
+        open={showEndModal}
+        onPause={handlePause}
+        onConfirmEnd={handleConfirmEnd}
+        onCancel={() => setShowEndModal(false)}
+      />
     </div>
   );
 }

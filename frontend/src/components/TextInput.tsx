@@ -1,27 +1,25 @@
-import { useState, type FormEvent } from "react";
+import { type FormEvent } from "react";
 import { useRoomContext } from "@livekit/components-react";
 import styles from "./TextInput.module.css";
 
 interface Props {
   disabled: boolean;
+  draftText: string;
+  onDraftChange: (text: string) => void;
+  onSent: (text: string) => void;
 }
 
-export function TextInput({ disabled }: Props) {
-  const [text, setText] = useState("");
+export function TextInput({ disabled, draftText, onDraftChange, onSent }: Props) {
   const room = useRoomContext();
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    const trimmed = text.trim();
+    const trimmed = draftText.trim();
     if (!trimmed || disabled) return;
 
-    // Send text as a data message so the agent receives it as user input.
-    const encoder = new TextEncoder();
-    const data = encoder.encode(
-      JSON.stringify({ type: "user_text", text: trimmed })
-    );
-    await room.localParticipant.publishData(data, { reliable: true });
-    setText("");
+    // Send text via LiveKit text stream so the agent receives it as user input.
+    await room.localParticipant.sendText(trimmed, { topic: "lk.chat" });
+    onSent(trimmed);
   }
 
   return (
@@ -29,15 +27,15 @@ export function TextInput({ disabled }: Props) {
       <input
         className={styles.input}
         type="text"
-        placeholder="Type a message (text fallback)..."
-        value={text}
-        onChange={(e) => setText(e.target.value)}
+        placeholder="Type a message or use the mic to record..."
+        value={draftText}
+        onChange={(e) => onDraftChange(e.target.value)}
         disabled={disabled}
       />
       <button
         type="submit"
         className={styles.sendBtn}
-        disabled={disabled || !text.trim()}
+        disabled={disabled || !draftText.trim()}
       >
         Send
       </button>

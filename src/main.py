@@ -3,9 +3,17 @@ import sys
 
 from dotenv import load_dotenv
 
-from livekit.agents import AgentServer, AgentSession, JobContext, JobProcess, cli, metrics
+from livekit.agents import (
+    AgentServer,
+    AgentSession,
+    JobContext,
+    JobProcess,
+    RoomInputOptions,
+    cli,
+    metrics,
+)
 from livekit.agents.voice import MetricsCollectedEvent
-from livekit.plugins import google, openai, silero
+from livekit.plugins import google, openai
 
 from .agents import IntroductionAgent
 from .config import MAX_COMPLETION_TOKENS
@@ -18,7 +26,7 @@ server = AgentServer()
 
 
 def prewarm(proc: JobProcess) -> None:
-    proc.userdata["vad"] = silero.VAD.load()
+    pass
 
 
 server.setup_fnc = prewarm
@@ -27,8 +35,6 @@ server.setup_fnc = prewarm
 @server.rtc_session()
 async def entrypoint(ctx: JobContext) -> None:
     session = AgentSession[InterviewData](
-        vad=ctx.proc.userdata["vad"],
-        stt=google.STT(),
         llm=openai.LLM(model="gpt-4.1-mini", max_completion_tokens=MAX_COMPLETION_TOKENS),
         tts=google.TTS(model_name="chirp_3"),
         userdata=InterviewData(),
@@ -50,6 +56,10 @@ async def entrypoint(ctx: JobContext) -> None:
     await session.start(
         agent=IntroductionAgent(),
         room=ctx.room,
+        room_input_options=RoomInputOptions(
+            text_enabled=True,
+            audio_enabled=False,
+        ),
     )
 
 

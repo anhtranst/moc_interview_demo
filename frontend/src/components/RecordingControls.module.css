@@ -1,0 +1,43 @@
+.btn {
+  min-width: 130px;
+  padding: 10px 16px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 24px;
+  flex-shrink: 0;
+  color: white;
+}
+
+.start {
+  background: var(--success);
+}
+
+.start:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.start:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.pause {
+  background: #f59e0b;
+}
+
+.pause:hover {
+  opacity: 0.9;
+}
+
+.resume {
+  background: var(--primary);
+}
+
+.resume:hover {
+  opacity: 0.9;
+}
+
+.unsupported {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+}
