@@ -39,13 +39,11 @@ flowchart TD
     H -->|User clicks End Interview| P
     M -->|User clicks End Interview| P
     N -->|User clicks End Interview| P
-    P -->|Just Pause| Q[Interview paused]
+    P -->|Pause & Resume| F
+    P -->|Pause & Resume| H
+    P -->|Pause & Resume| M
+    P -->|Pause & Resume| N
     P -->|Yes, End| O
-    Q -->|Resume| F
-    Q -->|Resume| H
-    Q -->|Resume| M
-    Q -->|Resume| N
-    Q -->|User clicks End Interview again| P
 ```
 
 ### Input Flow
