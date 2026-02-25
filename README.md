@@ -41,8 +41,10 @@ flowchart TD
     N -->|User clicks End Interview| P
     P -->|Just Pause| Q[Interview paused]
     P -->|Yes, End| O
-    Q -->|Resume during introduction| H
-    Q -->|Resume during experience| N
+    Q -->|Resume| F
+    Q -->|Resume| H
+    Q -->|Resume| M
+    Q -->|Resume| N
     Q -->|User clicks End Interview again| P
 ```
 
