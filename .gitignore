@@ -9,9 +9,13 @@ node_modules/
 dist/
 build/
 
+# Container
+.devcontainer/
+
 # Env and secrets
 .env
 .env.*
+credentials/
 
 # OS
 .DS_Store
@@ -19,3 +23,6 @@ Thumbs.db
 
 # Editor
 .vscode/
+
+# Claude
+CLAUDE.md
