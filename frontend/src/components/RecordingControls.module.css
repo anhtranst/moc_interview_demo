@@ -1,5 +1,12 @@
+.wrapper {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
 .btn {
-  min-width: 130px;
+  min-width: 100px;
   padding: 10px 16px;
   font-size: 0.875rem;
   font-weight: 600;
@@ -21,20 +28,52 @@
   cursor: not-allowed;
 }
 
-.pause {
-  background: #f59e0b;
+.pauseBtn {
+  background: #555;
 }
 
-.pause:hover {
-  opacity: 0.9;
+.pauseBtn:hover {
+  background: #666;
 }
 
-.resume {
+.resumeBtn {
   background: var(--primary);
 }
 
-.resume:hover {
+.resumeBtn:hover {
   opacity: 0.9;
+}
+
+/* Status indicator (text label next to the action button) */
+.status {
+  font-size: 0.85rem;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.statusRecording {
+  color: var(--danger);
+}
+
+.statusPaused {
+  color: var(--text-muted);
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--danger);
+  display: inline-block;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
 }
 
 .unsupported {

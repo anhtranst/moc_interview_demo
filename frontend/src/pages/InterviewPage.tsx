@@ -71,26 +71,34 @@ function InterviewRoom() {
 
   const handleTranscription = useCallback(
     (segments: TranscriptionSegment[], participant?: Participant) => {
-      const newEntries: TranscriptEntry[] = [];
-
       for (const seg of segments) {
-        if (!seg.final) continue;
+        // Skip segments that have already been finalized.
         if (seenSegmentIds.current.has(seg.id)) continue;
-        seenSegmentIds.current.add(seg.id);
 
         const text = seg.text.trim();
         if (!text) continue;
 
+        if (seg.final) {
+          seenSegmentIds.current.add(seg.id);
+        }
+
         const isAgent = participant?.isAgent ?? false;
-        newEntries.push({
+        const entry: TranscriptEntry = {
           id: seg.id,
           speaker: isAgent ? "agent" : "user",
           text,
-        });
-      }
+        };
 
-      if (newEntries.length > 0) {
-        setTranscripts((prev) => [...prev, ...newEntries]);
+        // Upsert: update existing entry in-place, or append new.
+        setTranscripts((prev) => {
+          const idx = prev.findIndex((t) => t.id === seg.id);
+          if (idx >= 0) {
+            const updated = [...prev];
+            updated[idx] = entry;
+            return updated;
+          }
+          return [...prev, entry];
+        });
       }
     },
     []

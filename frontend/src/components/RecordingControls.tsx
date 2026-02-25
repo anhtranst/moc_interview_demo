@@ -173,22 +173,24 @@ export function RecordingControls({ onTranscript, draftText, controlRef, disable
 
   if (state === "recording") {
     return (
-      <button
-        className={`${styles.btn} ${styles.pause}`}
-        onClick={handlePause}
-      >
-        Pause
-      </button>
+      <div className={styles.wrapper}>
+        <span className={`${styles.status} ${styles.statusRecording}`}>
+          <span className={styles.dot} /> Recording...
+        </span>
+        <button className={`${styles.btn} ${styles.pauseBtn}`} onClick={handlePause}>
+          Pause
+        </button>
+      </div>
     );
   }
 
   // paused
   return (
-    <button
-      className={`${styles.btn} ${styles.resume}`}
-      onClick={handleResume}
-    >
-      Resume
-    </button>
+    <div className={styles.wrapper}>
+      <span className={`${styles.status} ${styles.statusPaused}`}>Paused</span>
+      <button className={`${styles.btn} ${styles.resumeBtn}`} onClick={handleResume}>
+        Resume
+      </button>
+    </div>
   );
 }
