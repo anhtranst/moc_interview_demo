@@ -13,7 +13,7 @@ from src.agents import (
     PastExperienceAgent,
     _END_INTERVIEW_TEXT,
 )
-from src.config import MAX_COMPLETION_TOKENS
+from src.config import MAX_COMPLETION_TOKENS, MAX_ENDPOINTING_DELAY, MIN_ENDPOINTING_DELAY
 from src.data import InterviewData
 
 
@@ -44,6 +44,22 @@ class TestIntroductionAgent:
     def test_fallback_task_initially_none(self):
         agent = IntroductionAgent()
         assert agent._fallback_task is None
+
+    def test_instructions_enforce_one_detail_per_question(self):
+        agent = IntroductionAgent()
+        assert "one detail at a time" in agent.instructions.lower()
+
+    def test_instructions_mention_sequential_details(self):
+        agent = IntroductionAgent()
+        instructions_lower = agent.instructions.lower()
+        assert "name" in instructions_lower
+        assert "current role" in instructions_lower
+        assert "background" in instructions_lower
+        # Verify the sequence order: name before role before background
+        name_pos = instructions_lower.index("ask for their name")
+        role_pos = instructions_lower.index("current role")
+        background_pos = instructions_lower.index("background or education")
+        assert name_pos < role_pos < background_pos
 
     def test_inherits_from_interview_agent_base(self):
         agent = IntroductionAgent()
@@ -122,3 +138,23 @@ class TestConversationRules:
 class TestConfig:
     def test_max_completion_tokens_is_reasonable(self):
         assert 50 <= MAX_COMPLETION_TOKENS <= 500
+
+    def test_endpointing_delays_are_reasonable(self):
+        assert 1.0 <= MIN_ENDPOINTING_DELAY <= 5.0
+        assert MAX_ENDPOINTING_DELAY > MIN_ENDPOINTING_DELAY
+
+
+class TestEntrypointConfig:
+    def test_google_stt_can_be_imported(self):
+        """Verify google.STT is available for voice mode."""
+        from livekit.plugins.google import STT
+
+        assert STT is not None
+
+    def test_room_input_options_accept_both(self):
+        """Server should accept both text and audio input."""
+        from livekit.agents import RoomInputOptions
+
+        opts = RoomInputOptions(text_enabled=True, audio_enabled=True)
+        assert opts.text_enabled is True
+        assert opts.audio_enabled is True

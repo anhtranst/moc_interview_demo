@@ -24,14 +24,16 @@ CONVERSATION_RULES = (
 INTRODUCTION_INSTRUCTIONS = (
     "You are a professional interviewer conducting a mock interview. "
     "Your current task is the self-introduction stage. "
-    "Greet the candidate warmly and ask them to introduce themselves. "
-    "Listen carefully to their introduction. Ask brief clarifying questions "
-    "if their introduction is very short. "
-    "Once the candidate has provided a reasonable self-introduction "
-    "(their name, background, and current role or situation), "
+    "Gather the candidate's background ONE detail at a time, in this order:\n"
+    "1. First, greet the candidate warmly and ask for their name.\n"
+    "2. Once you know their name, ask about their current role or situation.\n"
+    "3. Once you know their role, ask about their background or education.\n"
+    "Ask only ONE question per turn. Do NOT combine multiple questions. "
+    "If the candidate gives a vague or incomplete answer, "
+    "ask a brief follow-up to clarify before moving to the next topic.\n"
+    "Once you have gathered all three details (name, current role, and background), "
     "call the proceed_to_experience tool to move to the next stage. "
-    "Do NOT call the tool prematurely -- wait until the candidate has "
-    "finished their introduction."
+    "Do NOT call the tool prematurely -- wait until you have all three details."
 ) + CONVERSATION_RULES
 
 EXPERIENCE_INSTRUCTIONS = (
@@ -72,6 +74,7 @@ class InterviewAgentBase(Agent):
                 f"Thank {name} for their time and end the interview warmly.",
                 allow_interruptions=False,
             )
+            self.session.shutdown(drain=True)
             raise StopResponse()
 
 
@@ -94,15 +97,31 @@ class IntroductionAgent(InterviewAgentBase):
 
     async def _fallback_transition(self) -> None:
         """Time-based fallback: if proceed_to_experience is not called
-        within the timeout, force-transition to PastExperienceAgent."""
+        within the timeout, generate a bridging message and transition
+        to PastExperienceAgent."""
         try:
             await asyncio.sleep(INTRODUCTION_FALLBACK_TIMEOUT)
         except asyncio.CancelledError:
             return
 
-        logger.info("Introduction fallback timer fired -- forcing transition")
+        logger.info("Introduction fallback timer fired -- bridging to next stage")
         userdata: InterviewData = self.session.userdata
         userdata.transition_source = "fallback"
+
+        # Generate a bridging message and wait for it to fully play out
+        # before switching agents, so the transition feels natural.
+        name = userdata.candidate_name or "there"
+        try:
+            await self.session.generate_reply(
+                instructions=(
+                    f"Thank {name} for what they have shared so far and let them know "
+                    "you'd like to move on to discuss their work experience in more detail. "
+                    "Keep it to one brief sentence."
+                ),
+                allow_interruptions=False,
+            )
+        except asyncio.CancelledError:
+            return  # Tool-based transition took over; abort fallback
 
         next_agent = PastExperienceAgent(chat_ctx=self.chat_ctx)
         self.session.update_agent(next_agent)
@@ -149,10 +168,10 @@ class PastExperienceAgent(InterviewAgentBase):
         if userdata.transition_source == "fallback":
             self.session.generate_reply(
                 instructions=(
-                    f"The candidate {name} has been speaking for a while. "
-                    "Smoothly transition to asking about their past experience. "
-                    "Briefly acknowledge what they have shared so far, then "
-                    "ask about their past work experience."
+                    f"The candidate {name} has already been told you're moving on to "
+                    "discuss their work experience. Ask a specific question about their "
+                    "past work experience or most recent role. Do NOT repeat that you're "
+                    "transitioning -- just ask the question directly."
                 )
             )
         else:
@@ -174,4 +193,6 @@ class PastExperienceAgent(InterviewAgentBase):
             instructions=f"Thank {name} for their time and end the interview warmly.",
             allow_interruptions=False,
         )
+        self.session.shutdown(drain=True)
+        raise StopResponse()
 

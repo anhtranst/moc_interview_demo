@@ -1,0 +1,46 @@
+.container {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.toggle {
+  display: flex;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.option {
+  padding: 6px 14px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  background: transparent;
+  color: var(--text-muted);
+  border: none;
+  border-radius: 0;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.option:hover:not(:disabled):not(.active) {
+  background: var(--surface);
+}
+
+.option.active {
+  background: var(--primary);
+  color: white;
+}
+
+.option:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}

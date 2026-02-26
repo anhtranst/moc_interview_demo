@@ -16,7 +16,7 @@ from livekit.agents.voice import MetricsCollectedEvent
 from livekit.plugins import google, openai
 
 from .agents import IntroductionAgent
-from .config import MAX_COMPLETION_TOKENS
+from .config import MAX_COMPLETION_TOKENS, MAX_ENDPOINTING_DELAY, MIN_ENDPOINTING_DELAY
 from .data import InterviewData
 
 load_dotenv()
@@ -36,8 +36,18 @@ server.setup_fnc = prewarm
 async def entrypoint(ctx: JobContext) -> None:
     session = AgentSession[InterviewData](
         llm=openai.LLM(model="gpt-4.1-mini", max_completion_tokens=MAX_COMPLETION_TOKENS),
+        stt=google.STT(
+            languages="en-US",
+            detect_language=True,
+            interim_results=True,
+            model="latest_long",
+            enable_voice_activity_events=True,
+        ),
         tts=google.TTS(model_name="chirp_3"),
         userdata=InterviewData(),
+        turn_detection="stt",
+        min_endpointing_delay=MIN_ENDPOINTING_DELAY,
+        max_endpointing_delay=MAX_ENDPOINTING_DELAY,
     )
 
     usage_collector = metrics.UsageCollector()
@@ -58,7 +68,7 @@ async def entrypoint(ctx: JobContext) -> None:
         room=ctx.room,
         room_input_options=RoomInputOptions(
             text_enabled=True,
-            audio_enabled=False,
+            audio_enabled=True,
         ),
     )
 

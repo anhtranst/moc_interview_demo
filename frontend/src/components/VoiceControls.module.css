@@ -1,0 +1,70 @@
+.container {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex: 1;
+}
+
+.indicator {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--success);
+  display: inline-block;
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+.statusText {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--text-muted);
+}
+
+.micBtn {
+  min-width: 80px;
+  padding: 10px 16px;
+  font-size: 0.875rem;
+  font-weight: 600;
+  border-radius: 24px;
+  color: white;
+  flex-shrink: 0;
+}
+
+.micOn {
+  background: #555;
+}
+
+.micOn:hover:not(:disabled) {
+  background: #666;
+}
+
+.micOff {
+  background: var(--success);
+}
+
+.micOff:hover:not(:disabled) {
+  opacity: 0.9;
+}
+
+.micBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.hint {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  opacity: 0.7;
+}

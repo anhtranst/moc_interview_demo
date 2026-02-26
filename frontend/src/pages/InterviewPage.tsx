@@ -19,6 +19,8 @@ import {
 import { TranscriptPanel } from "../components/TranscriptPanel";
 import { TextInput } from "../components/TextInput";
 import { EndInterviewModal } from "../components/EndInterviewModal";
+import { ModeToggle, type InterviewMode } from "../components/ModeToggle";
+import { VoiceControls } from "../components/VoiceControls";
 import styles from "./InterviewPage.module.css";
 
 interface LocationState {
@@ -33,6 +35,9 @@ export interface TranscriptEntry {
   speaker: "agent" | "user";
   text: string;
 }
+
+// Skip LLM function-call text that leaks into the transcription stream.
+const FUNCTION_CALL_RE = /^\s*functions\.\w+\s*\(.*\)\s*$/;
 
 export function InterviewPage() {
   const location = useLocation();
@@ -64,6 +69,7 @@ function InterviewRoom() {
   const [transcripts, setTranscripts] = useState<TranscriptEntry[]>([]);
   const [draftText, setDraftText] = useState("");
   const [showEndModal, setShowEndModal] = useState(false);
+  const [mode, setMode] = useState<InterviewMode>("review");
   const recordingControlRef = useRef<RecordingControlsHandle | null>(null);
 
   // Track seen segment IDs to deduplicate transcript entries.
@@ -77,6 +83,12 @@ function InterviewRoom() {
 
         const text = seg.text.trim();
         if (!text) continue;
+
+        // Filter out raw function-call representations (e.g. "functions.end_interview()")
+        if (FUNCTION_CALL_RE.test(text)) {
+          if (seg.final) seenSegmentIds.current.add(seg.id);
+          continue;
+        }
 
         if (seg.final) {
           seenSegmentIds.current.add(seg.id);
@@ -158,6 +170,11 @@ function InterviewRoom() {
             {isConnected ? "Connected" : connectionState}
           </span>
         </div>
+        <ModeToggle
+          mode={mode}
+          onModeChange={setMode}
+          disabled={!isConnected}
+        />
         <div className={styles.headerActions}>
           <button
             className={styles.endInterviewBtn}
@@ -177,18 +194,24 @@ function InterviewRoom() {
       </main>
 
       <footer className={styles.footer}>
-        <RecordingControls
-          onTranscript={setDraftText}
-          draftText={draftText}
-          controlRef={recordingControlRef}
-          disabled={!isConnected}
-        />
-        <TextInput
-          disabled={!isConnected}
-          draftText={draftText}
-          onDraftChange={handleDraftChange}
-          onSent={handleSent}
-        />
+        {mode === "review" ? (
+          <>
+            <RecordingControls
+              onTranscript={setDraftText}
+              draftText={draftText}
+              controlRef={recordingControlRef}
+              disabled={!isConnected}
+            />
+            <TextInput
+              disabled={!isConnected}
+              draftText={draftText}
+              onDraftChange={handleDraftChange}
+              onSent={handleSent}
+            />
+          </>
+        ) : (
+          <VoiceControls disabled={!isConnected} />
+        )}
       </footer>
 
       <RoomAudioRenderer />

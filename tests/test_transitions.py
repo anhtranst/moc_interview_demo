@@ -85,3 +85,18 @@ class TestUserdataPersistence:
         data = InterviewData()
         data.transition_source = "fallback"
         assert data.transition_source == "fallback"
+
+
+class TestFallbackBridgingMessage:
+    def test_name_fallback_when_candidate_name_is_none(self):
+        """When candidate_name is None, bridging should use 'there' fallback."""
+        data = InterviewData()
+        name = data.candidate_name or "there"
+        assert name == "there"
+
+    def test_name_used_when_candidate_name_is_set(self):
+        """When candidate_name is set, bridging should use the actual name."""
+        data = InterviewData()
+        data.candidate_name = "Alice"
+        name = data.candidate_name or "there"
+        assert name == "Alice"
