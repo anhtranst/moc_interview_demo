@@ -6,28 +6,44 @@ from livekit.agents import ChatContext
 
 from src.agents import (
     CONVERSATION_RULES,
-    EXPERIENCE_INSTRUCTIONS,
-    INTRODUCTION_INSTRUCTIONS,
     InterviewAgentBase,
     IntroductionAgent,
     PastExperienceAgent,
     _END_INTERVIEW_TEXT,
+    build_experience_instructions,
+    build_introduction_instructions,
 )
 from src.config import MAX_COMPLETION_TOKENS, MAX_ENDPOINTING_DELAY, MIN_ENDPOINTING_DELAY
 from src.data import InterviewData
 
+SAMPLE_CV = "John Doe\nSoftware Engineer at Acme Corp\nPython, React, AWS"
+
 
 class TestIntroductionAgent:
-    def test_instructions_mention_self_introduction(self):
+    def test_no_cv_instructions_mention_self_introduction(self):
         agent = IntroductionAgent()
         assert "self-introduction" in agent.instructions.lower()
 
-    def test_instructions_are_correct(self):
+    def test_no_cv_instructions_ask_for_name(self):
         agent = IntroductionAgent()
-        assert agent.instructions == INTRODUCTION_INSTRUCTIONS
+        assert "ask for their name" in agent.instructions.lower()
+
+    def test_cv_instructions_greet_by_name(self):
+        agent = IntroductionAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
+        assert "John Doe" in agent.instructions
+        assert "greet" in agent.instructions.lower()
+        assert "do not ask for their name" in agent.instructions.lower()
+
+    def test_cv_instructions_include_cv_text(self):
+        agent = IntroductionAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
+        assert SAMPLE_CV in agent.instructions
 
     def test_instructions_include_conversation_rules(self):
         agent = IntroductionAgent()
+        assert "1-3 sentences" in agent.instructions
+
+    def test_cv_instructions_include_conversation_rules(self):
+        agent = IntroductionAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
         assert "1-3 sentences" in agent.instructions
 
     def test_has_proceed_tool(self):
@@ -45,11 +61,11 @@ class TestIntroductionAgent:
         agent = IntroductionAgent()
         assert agent._fallback_task is None
 
-    def test_instructions_enforce_one_detail_per_question(self):
+    def test_no_cv_instructions_enforce_one_detail_per_question(self):
         agent = IntroductionAgent()
         assert "one detail at a time" in agent.instructions.lower()
 
-    def test_instructions_mention_sequential_details(self):
+    def test_no_cv_instructions_mention_sequential_details(self):
         agent = IntroductionAgent()
         instructions_lower = agent.instructions.lower()
         assert "name" in instructions_lower
@@ -65,15 +81,24 @@ class TestIntroductionAgent:
         agent = IntroductionAgent()
         assert isinstance(agent, InterviewAgentBase)
 
+    def test_cv_text_stored_on_instance(self):
+        agent = IntroductionAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
+        assert agent._cv_text == SAMPLE_CV
+        assert agent._candidate_name == "John Doe"
+
 
 class TestPastExperienceAgent:
-    def test_instructions_mention_experience(self):
+    def test_no_cv_instructions_mention_experience(self):
         agent = PastExperienceAgent()
         assert "experience" in agent.instructions.lower()
 
-    def test_instructions_are_correct(self):
-        agent = PastExperienceAgent()
-        assert agent.instructions == EXPERIENCE_INSTRUCTIONS
+    def test_cv_instructions_include_cv_text(self):
+        agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
+        assert SAMPLE_CV in agent.instructions
+
+    def test_cv_instructions_mention_targeted_questions(self):
+        agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
+        assert "targeted" in agent.instructions.lower()
 
     def test_instructions_include_conversation_rules(self):
         agent = PastExperienceAgent()
@@ -96,12 +121,44 @@ class TestPastExperienceAgent:
         assert isinstance(agent, InterviewAgentBase)
 
 
+class TestInstructionBuilders:
+    def test_intro_no_cv_fallback(self):
+        result = build_introduction_instructions(None, None)
+        assert "ask for their name" in result.lower()
+        assert result.endswith(CONVERSATION_RULES)
+
+    def test_intro_with_cv(self):
+        result = build_introduction_instructions(SAMPLE_CV, "John Doe")
+        assert "John Doe" in result
+        assert SAMPLE_CV in result
+        assert "do not ask for their name" in result.lower()
+        assert result.endswith(CONVERSATION_RULES)
+
+    def test_experience_no_cv_fallback(self):
+        result = build_experience_instructions(None, None)
+        assert "experience" in result.lower()
+        assert result.endswith(CONVERSATION_RULES)
+
+    def test_experience_with_cv(self):
+        result = build_experience_instructions(SAMPLE_CV, "John Doe")
+        assert SAMPLE_CV in result
+        assert "targeted" in result.lower()
+        assert result.endswith(CONVERSATION_RULES)
+
+    def test_experience_cv_without_name(self):
+        result = build_experience_instructions(SAMPLE_CV, None)
+        assert SAMPLE_CV in result
+        assert "the candidate" in result.lower()
+
+
 class TestInterviewData:
     def test_defaults_are_none(self):
         data = InterviewData()
         assert data.candidate_name is None
         assert data.introduction_summary is None
         assert data.transition_source is None
+        assert data.cv_text is None
+        assert data.stt_keywords == []
 
     def test_fields_are_settable(self):
         data = InterviewData()
@@ -111,6 +168,14 @@ class TestInterviewData:
         assert data.candidate_name == "Alice"
         assert data.introduction_summary == "Software engineer with 5 years experience"
         assert data.transition_source == "tool"
+
+    def test_cv_fields(self):
+        data = InterviewData(
+            cv_text="Some CV text",
+            stt_keywords=[("Python", 15.0), ("AWS", 10.0)],
+        )
+        assert data.cv_text == "Some CV text"
+        assert len(data.stt_keywords) == 2
 
 
 class TestEndInterviewText:
@@ -127,12 +192,6 @@ class TestConversationRules:
 
     def test_rules_mention_single_question(self):
         assert "one question at a time" in CONVERSATION_RULES
-
-    def test_rules_appended_to_introduction(self):
-        assert INTRODUCTION_INSTRUCTIONS.endswith(CONVERSATION_RULES)
-
-    def test_rules_appended_to_experience(self):
-        assert EXPERIENCE_INSTRUCTIONS.endswith(CONVERSATION_RULES)
 
 
 class TestConfig:

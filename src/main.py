@@ -21,6 +21,7 @@ from livekit.plugins import google, openai
 
 from .agents import IntroductionAgent
 from .config import MAX_COMPLETION_TOKENS, MAX_ENDPOINTING_DELAY, MIN_ENDPOINTING_DELAY
+from .cv_loader import extract_cv_metadata, load_cv_text
 from .data import InterviewData
 
 load_dotenv()
@@ -49,19 +50,36 @@ async def entrypoint(ctx: JobContext) -> None:
         if len(parts) >= 2:
             interview_code = parts[1]
 
+    # Load CV and extract metadata (name + STT keywords) before session starts.
+    llm = openai.LLM(model="gpt-4.1-mini", max_completion_tokens=MAX_COMPLETION_TOKENS)
+    cv_text: str | None = None
+    candidate_name: str | None = None
+    stt_keywords: list[tuple[str, float]] = []
+
+    if interview_code:
+        cv_text = load_cv_text(interview_code)
+        if cv_text:
+            metadata = await extract_cv_metadata(cv_text, llm)
+            candidate_name = metadata.candidate_name
+            stt_keywords = metadata.keywords
+
     userdata = InterviewData(
         interview_code=interview_code,
         started_at=time.time(),
+        candidate_name=candidate_name,
+        cv_text=cv_text,
+        stt_keywords=stt_keywords,
     )
 
     session = AgentSession[InterviewData](
-        llm=openai.LLM(model="gpt-4.1-mini", max_completion_tokens=MAX_COMPLETION_TOKENS),
+        llm=llm,
         stt=google.STT(
             languages="en-US",
             detect_language=True,
             interim_results=True,
             model="latest_long",
             enable_voice_activity_events=True,
+            keywords=stt_keywords or [],
         ),
         tts=google.TTS(model_name="chirp_3"),
         userdata=userdata,
@@ -85,7 +103,7 @@ async def entrypoint(ctx: JobContext) -> None:
     ctx.add_shutdown_callback(on_shutdown)
 
     await session.start(
-        agent=IntroductionAgent(),
+        agent=IntroductionAgent(cv_text=cv_text, candidate_name=candidate_name),
         room=ctx.room,
         room_input_options=RoomInputOptions(
             text_enabled=True,

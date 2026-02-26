@@ -21,12 +21,16 @@ CONVERSATION_RULES = (
     "- Never produce long paragraphs or multiple questions in a single response."
 )
 
-INTRODUCTION_INSTRUCTIONS = (
+# ---------------------------------------------------------------------------
+# Static fallback instructions (used when no CV is available)
+# ---------------------------------------------------------------------------
+
+_INTRO_NO_CV = (
     "You are a professional interviewer conducting a mock interview. "
     "Your current task is the self-introduction stage. "
     "Gather the candidate's background ONE detail at a time, in this order:\n"
-    "1. First, greet the candidate warmly and ask for their name.\n"
-    "2. Once you know their name, ask about their current role or situation.\n"
+    "1. First, greet the candidate warmly with their name.\n"
+    "2. Then, ask about their current role or situation.\n"
     "3. Once you know their role, ask about their background or education.\n"
     "Ask only ONE question per turn. Do NOT combine multiple questions. "
     "If the candidate gives a vague or incomplete answer, "
@@ -34,9 +38,9 @@ INTRODUCTION_INSTRUCTIONS = (
     "Once you have gathered all three details (name, current role, and background), "
     "call the proceed_to_experience tool to move to the next stage. "
     "Do NOT call the tool prematurely -- wait until you have all three details."
-) + CONVERSATION_RULES
+)
 
-EXPERIENCE_INSTRUCTIONS = (
+_EXPERIENCE_NO_CV = (
     "You are a professional interviewer conducting a mock interview. "
     "You are now in the past-experience stage. "
     "The candidate has already introduced themselves. "
@@ -46,7 +50,56 @@ EXPERIENCE_INSTRUCTIONS = (
     "Be conversational and encouraging. "
     "When the candidate has discussed their experience sufficiently "
     "(at least 2-3 exchanges), call the end_interview tool to wrap up."
-) + CONVERSATION_RULES
+)
+
+
+# ---------------------------------------------------------------------------
+# Dynamic instruction builders (CV-aware)
+# ---------------------------------------------------------------------------
+
+
+def build_introduction_instructions(
+    cv_text: str | None, candidate_name: str | None
+) -> str:
+    """Build introduction-stage instructions, personalised with CV data."""
+    if cv_text and candidate_name:
+        return (
+            "You are a professional interviewer conducting a mock interview. "
+            f"You have already reviewed the candidate's CV. The candidate's name is {candidate_name}.\n\n"
+            "Your current task is the self-introduction stage. "
+            f"Greet {candidate_name} warmly by name — you already know who they are. "
+            "Do NOT ask for their name again.\n"
+            "Ask about their current role or situation, then about their background or education. "
+            "Ask only ONE question per turn. Do NOT combine multiple questions. "
+            "If the candidate gives a vague or incomplete answer, "
+            "ask a brief follow-up to clarify before moving to the next topic.\n"
+            "Once you have discussed their current role and background, "
+            "call the proceed_to_experience tool to move to the next stage.\n\n"
+            f"Here is the candidate's CV for reference:\n\n{cv_text}"
+        ) + CONVERSATION_RULES
+    return _INTRO_NO_CV + CONVERSATION_RULES
+
+
+def build_experience_instructions(
+    cv_text: str | None, candidate_name: str | None
+) -> str:
+    """Build experience-stage instructions, personalised with CV data."""
+    if cv_text:
+        name = candidate_name or "the candidate"
+        return (
+            "You are a professional interviewer conducting a mock interview. "
+            "You are now in the past-experience stage. "
+            f"{name} has already introduced themselves.\n\n"
+            "You have the candidate's CV below. Use it to ask targeted questions about "
+            "specific projects, roles, and achievements mentioned in the CV. "
+            "Dig into details the candidate didn't elaborate on. "
+            "Ask follow-up questions to understand their contributions and impact. "
+            "Be conversational and encouraging.\n"
+            "When the candidate has discussed their experience sufficiently "
+            "(at least 2-3 exchanges), call the end_interview tool to wrap up.\n\n"
+            f"Candidate's CV:\n\n{cv_text}"
+        ) + CONVERSATION_RULES
+    return _EXPERIENCE_NO_CV + CONVERSATION_RULES
 
 
 # Exact text sent by the frontend End Interview button after user confirms.
@@ -79,11 +132,19 @@ class InterviewAgentBase(Agent):
 
 
 class IntroductionAgent(InterviewAgentBase):
-    def __init__(self, *, chat_ctx: ChatContext | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        chat_ctx: ChatContext | None = None,
+        cv_text: str | None = None,
+        candidate_name: str | None = None,
+    ) -> None:
         super().__init__(
-            instructions=INTRODUCTION_INSTRUCTIONS,
+            instructions=build_introduction_instructions(cv_text, candidate_name),
             chat_ctx=chat_ctx,
         )
+        self._cv_text = cv_text
+        self._candidate_name = candidate_name
         self._fallback_task: asyncio.Task[None] | None = None
 
     async def on_enter(self) -> None:
@@ -123,7 +184,11 @@ class IntroductionAgent(InterviewAgentBase):
         except asyncio.CancelledError:
             return  # Tool-based transition took over; abort fallback
 
-        next_agent = PastExperienceAgent(chat_ctx=self.chat_ctx)
+        next_agent = PastExperienceAgent(
+            chat_ctx=self.chat_ctx,
+            cv_text=self._cv_text,
+            candidate_name=userdata.candidate_name,
+        )
         self.session.update_agent(next_agent)
 
     @function_tool
@@ -150,14 +215,23 @@ class IntroductionAgent(InterviewAgentBase):
             self._fallback_task.cancel()
             self._fallback_task = None
 
-        return PastExperienceAgent(chat_ctx=self.chat_ctx)
-
+        return PastExperienceAgent(
+            chat_ctx=self.chat_ctx,
+            cv_text=self._cv_text,
+            candidate_name=candidate_name,
+        )
 
 
 class PastExperienceAgent(InterviewAgentBase):
-    def __init__(self, *, chat_ctx: ChatContext | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        chat_ctx: ChatContext | None = None,
+        cv_text: str | None = None,
+        candidate_name: str | None = None,
+    ) -> None:
         super().__init__(
-            instructions=EXPERIENCE_INSTRUCTIONS,
+            instructions=build_experience_instructions(cv_text, candidate_name),
             chat_ctx=chat_ctx,
         )
 
@@ -194,4 +268,3 @@ class PastExperienceAgent(InterviewAgentBase):
         )
         self.session.shutdown(drain=True)
         raise StopResponse()
-

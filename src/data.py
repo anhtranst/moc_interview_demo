@@ -1,4 +1,4 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -10,3 +10,7 @@ class InterviewData:
     candidate_name: str | None = None
     introduction_summary: str | None = None
     transition_source: str | None = None  # "tool" or "fallback"
+
+    # CV-related fields populated at session start
+    cv_text: str | None = None
+    stt_keywords: list[tuple[str, float]] = field(default_factory=list)
