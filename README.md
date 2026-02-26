@@ -1,14 +1,18 @@
 # AI Mock Interview Demo
 
-A multi-stage interview agent built on the [LiveKit Agents](https://github.com/livekit/agents) framework, with a React web frontend. The agent conducts a mock interview with two stages — **self-introduction** and **past experience** — featuring smooth transitions and a time-based fallback mechanism.
+A multi-stage interview agent built on the [LiveKit Agents](https://github.com/livekit/agents) framework, with a React web frontend. The agent conducts a mock interview with two stages — **self-introduction** and **past experience** — featuring CV-aware personalization, smooth transitions, and a time-based fallback mechanism.
 
 ## Features
 
 - **Two-stage interview flow**: Self-introduction followed by past-experience discussion
+- **CV-aware personalization**: Parses the candidate's CV PDF to greet them by name and ask targeted questions about their specific experience, projects, and skills
+- **Dual input modes**: Review mode (browser speech recognition → editable text) and Live mode (server-side Google STT for real-time voice conversation)
+- **STT keyword boosting**: Extracts key terms from the CV (names, companies, skills) and passes them to Google STT as phrase hints for improved transcription accuracy
 - **Smart transitions**: LLM-driven tool calls trigger natural stage transitions
 - **Fallback mechanism**: Time-based fallback ensures the interview progresses even if the normal transition logic isn't triggered
 - **End Interview button**: Users can end the interview at any time via a confirmation dialog
 - **Response brevity**: Agent responses are limited to 1-3 sentences via prompt rules and `max_completion_tokens`
+- **Transcript persistence**: Conversation transcript is saved to `data/{code}/transcripts/` as JSON at session end
 - **Web frontend**: React app with browser-based speech recognition, editable text input, and transcript panel
 - **Conversation continuity**: Full chat history is preserved across stage transitions
 - **Shared state**: Candidate information persists across agents via shared userdata
@@ -48,7 +52,7 @@ flowchart TD
 
 ### Input Flow
 
-The agent uses **text-only input** — no server-side STT or VAD:
+The agent supports **dual input modes** — text and audio:
 
 ```mermaid
 sequenceDiagram
@@ -56,14 +60,21 @@ sequenceDiagram
     participant SR as SpeechRecognition API
     participant TI as TextInput
     participant LK as LiveKit Room
+    participant STT as Google STT (server)
     participant A as Agent (Python)
 
-    U->>SR: Start Recording (mic)
-    SR->>TI: Interim/final transcript
-    U->>TI: Edit text (optional)
-    U->>TI: Click Send
-    TI->>LK: sendText(text, topic="lk.chat")
-    LK->>A: Text stream received
+    alt Review mode (text input)
+        U->>SR: Start Recording (mic)
+        SR->>TI: Interim/final transcript
+        U->>TI: Edit text (optional)
+        U->>TI: Click Send
+        TI->>LK: sendText(text, topic="lk.chat")
+        LK->>A: Text stream received
+    else Live mode (audio input)
+        U->>LK: Microphone audio stream
+        LK->>STT: Audio frames
+        STT->>A: Transcribed text (turn_detection="stt")
+    end
     A->>A: on_user_turn_completed
     A->>A: LLM generates response
     A->>LK: TTS audio stream
@@ -108,9 +119,14 @@ mock_interview_demo/
 │   ├── __init__.py
 │   ├── main.py          # Application entrypoint (AgentServer + CLI + serve command)
 │   ├── agents.py         # InterviewAgentBase, IntroductionAgent, PastExperienceAgent
+│   ├── cv_loader.py      # CV PDF text extraction (pypdf) + LLM metadata extraction
 │   ├── data.py           # InterviewData dataclass (shared state)
-│   ├── config.py         # Configurable constants (timeouts, token limits)
+│   ├── config.py         # Configurable constants (timeouts, token limits, endpointing)
 │   └── server.py         # FastAPI token server (POST /api/token)
+├── data/
+│   └── {interview_code}/
+│       ├── cv/            # Candidate CV PDFs (placed by admin)
+│       └── transcripts/   # Interview transcripts (generated at runtime)
 ├── frontend/
 │   ├── src/
 │   │   ├── pages/
@@ -154,6 +170,9 @@ From `mock_interview_demo/`:
 .venv/Scripts/pip install -e ../livekit_agents/livekit-agents
 .venv/Scripts/pip install -e ../livekit_agents/livekit-plugins/livekit-plugins-google
 .venv/Scripts/pip install -e ../livekit_agents/livekit-plugins/livekit-plugins-openai
+
+# Install additional dependencies
+.venv/Scripts/pip install pypdf  # CV PDF text extraction
 
 # Install dev tools
 .venv/Scripts/pip install pytest pytest-asyncio ruff
@@ -212,13 +231,13 @@ All interview agents inherit from `InterviewAgentBase`, which handles the **End 
 
 ### IntroductionAgent
 
-The first agent greets the candidate and asks them to introduce themselves. Once the LLM determines the introduction is complete, it calls `proceed_to_experience` with the candidate's name and a summary.
+The first agent greets the candidate and gathers their introduction. If a CV is available, it greets the candidate by name (extracted from CV) and skips asking for their name. If no CV is provided, it falls back to asking for the candidate's name, current role, and background one detail at a time. Once the LLM determines the introduction is complete, it calls `proceed_to_experience` with the candidate's name and a summary.
 
 **Fallback mechanism**: On entering the stage, a background timer starts (default: 120 seconds). If the LLM doesn't call `proceed_to_experience` within this window, the timer forces a transition. The timer is cancelled if the normal tool-based transition fires first.
 
 ### PastExperienceAgent
 
-The second agent asks about the candidate's past work experience, projects, and achievements. It tailors its opening based on how the transition occurred:
+The second agent asks about the candidate's past work experience, projects, and achievements. If a CV is available, it asks targeted questions about specific projects, roles, and achievements mentioned in the CV. It tailors its opening based on how the transition occurred:
 
 - **Tool-based transition**: Thanks the candidate and naturally pivots to experience questions.
 - **Fallback transition**: Smoothly bridges to experience questions.
@@ -227,13 +246,12 @@ When the discussion is sufficient, the LLM calls `end_interview` to close the se
 
 ### Frontend
 
-The React frontend connects to the LiveKit room but does **not** send microphone audio. Instead:
+The React frontend connects to the LiveKit room and supports two input modes:
 
-1. **RecordingControls** uses the browser's `SpeechRecognition` API for local-only dictation.
-2. Transcribed text appears in the **TextInput** for review and editing.
-3. The user clicks **Send** to transmit text via `lk.chat` to the agent.
-4. The agent responds via TTS, which plays through `RoomAudioRenderer`.
-5. The **End Interview** button shows a confirmation modal. If the user confirms, `"end interview"` is sent to the agent, which triggers a goodbye message via TTS.
+1. **Review mode**: **RecordingControls** uses the browser's `SpeechRecognition` API for local dictation. Transcribed text appears in **TextInput** for review and editing. The user clicks **Send** to transmit text via `lk.chat`.
+2. **Live mode**: Microphone audio is published directly to the LiveKit room. Server-side Google STT transcribes it in real-time with configurable endpointing delays.
+3. The agent responds via TTS, which plays through `RoomAudioRenderer`.
+4. The **End Interview** button shows a confirmation modal. If the user confirms, `"end interview"` is sent to the agent, which triggers a goodbye message via TTS.
 
 ### Shared State
 
@@ -241,9 +259,13 @@ Both agents share an `InterviewData` dataclass via `AgentSession.userdata`:
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `candidate_name` | `str \| None` | Candidate's name, extracted during introduction |
+| `interview_code` | `str \| None` | Interview code extracted from room name |
+| `started_at` | `float \| None` | Session start timestamp (for transcript) |
+| `candidate_name` | `str \| None` | Candidate's name — from CV at startup or from introduction |
 | `introduction_summary` | `str \| None` | Brief summary of the candidate's introduction |
 | `transition_source` | `str \| None` | `"tool"` or `"fallback"` — how the transition occurred |
+| `cv_text` | `str \| None` | Raw CV text injected into agent instructions |
+| `stt_keywords` | `list[tuple[str, float]]` | CV-extracted keywords passed to Google STT as phrase hints |
 
 ## Configuration
 
@@ -253,6 +275,8 @@ Configurable constants in `src/config.py`:
 |----------|---------|-------------|
 | `INTRODUCTION_FALLBACK_TIMEOUT` | `120.0` | Seconds before fallback forces transition from introduction to experience stage |
 | `MAX_COMPLETION_TOKENS` | `150` | Hard ceiling on LLM response length (~2-3 sentences) |
+| `MIN_ENDPOINTING_DELAY` | `3.0` | Minimum silence (seconds) before treating a turn as complete |
+| `MAX_ENDPOINTING_DELAY` | `6.0` | Maximum wait (seconds) before forcing a turn to end |
 
 ## Testing
 
@@ -281,8 +305,9 @@ Configurable constants in `src/config.py`:
 
 - **Framework**: [LiveKit Agents](https://github.com/livekit/agents) (Python)
 - **LLM**: OpenAI GPT-4.1-mini
+- **Speech-to-Text**: Google Cloud STT (server-side, Live mode) + Browser SpeechRecognition API (client-side, Review mode)
 - **Text-to-Speech**: Google Cloud TTS (Chirp 3)
+- **CV Parsing**: pypdf (PDF text extraction)
 - **Frontend**: React + TypeScript + Vite
-- **Speech Recognition**: Browser SpeechRecognition API (local-only, no server-side STT)
 - **Token Server**: FastAPI + Uvicorn
 - **Real-time Transport**: LiveKit (WebRTC)
