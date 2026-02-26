@@ -188,8 +188,7 @@ class PastExperienceAgent(InterviewAgentBase):
         """Called when the past-experience discussion is complete
         and the interview should wrap up."""
         name = context.userdata.candidate_name or "candidate"
-        self.session.interrupt()
-        await self.session.generate_reply(
+        self.session.generate_reply(
             instructions=f"Thank {name} for their time and end the interview warmly.",
             allow_interruptions=False,
         )

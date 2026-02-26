@@ -27,9 +27,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Root of the data directory where per-interview folders live.
+_DATA_DIR = Path(__file__).resolve().parent.parent / "data"
+
 
 class TokenRequest(BaseModel):
     participant_name: str
+    interview_code: str
     room_name: str = ""
 
 
@@ -37,6 +41,7 @@ class TokenResponse(BaseModel):
     token: str
     livekit_url: str
     room_name: str
+    interview_code: str
 
 
 @app.post("/api/token", response_model=TokenResponse)
@@ -52,7 +57,19 @@ async def create_token(req: TokenRequest) -> TokenResponse:
             detail="LIVEKIT_API_KEY, LIVEKIT_API_SECRET, and LIVEKIT_URL must be set",
         )
 
-    room_name = req.room_name or f"interview-{uuid.uuid4().hex[:8]}"
+    # Validate the interview code exists on disk.
+    code = req.interview_code.strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="Interview code is required")
+
+    interview_dir = _DATA_DIR / code
+    if not interview_dir.is_dir():
+        raise HTTPException(status_code=404, detail="Invalid interview code")
+
+    # Each click gets a unique room so the LiveKit server dispatches a fresh
+    # agent job.  Format: "interview--{code}--{uuid}" — double-dash separators
+    # let the agent extract the code reliably.
+    room_name = req.room_name or f"interview--{code}--{uuid.uuid4().hex[:8]}"
 
     token = (
         AccessToken(api_key, api_secret)
@@ -62,7 +79,12 @@ async def create_token(req: TokenRequest) -> TokenResponse:
         .to_jwt()
     )
 
-    return TokenResponse(token=token, livekit_url=livekit_url, room_name=room_name)
+    return TokenResponse(
+        token=token,
+        livekit_url=livekit_url,
+        room_name=room_name,
+        interview_code=code,
+    )
 
 
 # Serve the React build if it exists (production mode).

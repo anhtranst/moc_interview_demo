@@ -24,5 +24,13 @@ Thumbs.db
 # Editor
 .vscode/
 
+# Interview data (CVs are placed by admin; transcripts and media are generated at runtime)
+data/*/cv/*
+data/*/transcripts/*.json
+data/*/media/*
+!data/*/cv/.gitkeep
+!data/*/transcripts/.gitkeep
+!data/*/media/.gitkeep
+
 # Claude
 CLAUDE.md

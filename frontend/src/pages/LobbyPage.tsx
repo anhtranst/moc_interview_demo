@@ -4,6 +4,7 @@ import { fetchToken } from "../lib/api";
 import styles from "./LobbyPage.module.css";
 
 export function LobbyPage() {
+  const [interviewCode, setInterviewCode] = useState("");
   const [name, setName] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -11,15 +12,21 @@ export function LobbyPage() {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (!name.trim()) return;
+    if (!interviewCode.trim() || !name.trim()) return;
 
     setLoading(true);
     setError("");
 
     try {
-      const { token, livekit_url, room_name } = await fetchToken(name.trim());
+      const resp = await fetchToken(name.trim(), interviewCode.trim());
       navigate("/interview", {
-        state: { token, livekitUrl: livekit_url, roomName: room_name, participantName: name.trim() },
+        state: {
+          token: resp.token,
+          livekitUrl: resp.livekit_url,
+          roomName: resp.room_name,
+          participantName: name.trim(),
+          interviewCode: resp.interview_code,
+        },
       });
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to connect");
@@ -37,6 +44,18 @@ export function LobbyPage() {
         </p>
 
         <form onSubmit={handleSubmit} className={styles.form}>
+          <label className={styles.label} htmlFor="interviewCode">
+            Interview code
+          </label>
+          <input
+            id="interviewCode"
+            type="text"
+            placeholder="Enter your interview code"
+            value={interviewCode}
+            onChange={(e) => setInterviewCode(e.target.value)}
+            autoFocus
+          />
+
           <label className={styles.label} htmlFor="name">
             Your name
           </label>
@@ -46,13 +65,12 @@ export function LobbyPage() {
             placeholder="Enter your name"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            autoFocus
           />
 
           <button
             type="submit"
             className={styles.startBtn}
-            disabled={!name.trim() || loading}
+            disabled={!interviewCode.trim() || !name.trim() || loading}
           >
             {loading ? "Connecting..." : "Start Interview"}
           </button>

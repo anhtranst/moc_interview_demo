@@ -6,8 +6,8 @@ INTRODUCTION_FALLBACK_TIMEOUT: float = 120.0
 MAX_COMPLETION_TOKENS: int = 150
 
 # Minimum silence (seconds) before the agent treats the user's turn as complete.
-# 2s prevents cutting off candidates who pause briefly to think.
-MIN_ENDPOINTING_DELAY: float = 2.0
+# 3s covers natural thinking pauses between sentences in an interview setting.
+MIN_ENDPOINTING_DELAY: float = 3.0
 
 # Maximum wait (seconds) before forcing the turn to end regardless of speech.
 # 6s accommodates longer thinking pauses typical in interviews.

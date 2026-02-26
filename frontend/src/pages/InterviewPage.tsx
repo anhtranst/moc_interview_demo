@@ -28,6 +28,7 @@ interface LocationState {
   livekitUrl: string;
   roomName: string;
   participantName: string;
+  interviewCode: string;
 }
 
 export interface TranscriptEntry {
