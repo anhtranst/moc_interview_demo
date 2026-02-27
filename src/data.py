@@ -14,3 +14,8 @@ class InterviewData:
     # CV-related fields populated at session start
     cv_text: str | None = None
     stt_keywords: list[tuple[str, float]] = field(default_factory=list)
+
+    # Experience-stage tracking
+    experience_topics_discussed: int = 0
+    current_topic_turns: int = 0
+    closing_question_asked: bool = False

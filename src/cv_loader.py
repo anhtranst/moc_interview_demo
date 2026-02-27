@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -90,14 +91,25 @@ async def extract_cv_metadata(cv_text: str, llm: object) -> CvMetadata:
     chat_ctx.add_message(role="user", content=_EXTRACTION_PROMPT + cv_text)
 
     try:
-        stream = llm.chat(chat_ctx=chat_ctx)
-        response_text = ""
-        async for chunk in stream:
-            if chunk.delta and chunk.delta.content:
-                response_text += chunk.delta.content
+        response = await llm.chat(chat_ctx=chat_ctx).collect()
+        response_text = response.text
 
-        # Parse JSON from response
-        data = json.loads(response_text)
+        if not response_text:
+            logger.warning("LLM returned empty response for CV metadata extraction")
+            return CvMetadata()
+
+        # Strip markdown code fences if present (LLMs sometimes wrap JSON)
+        cleaned = response_text.strip()
+        if cleaned.startswith("```"):
+            cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned[3:]
+            if cleaned.endswith("```"):
+                cleaned = cleaned[:-3].strip()
+
+        # Fix trailing commas before ] or } (common LLM JSON error)
+        cleaned = re.sub(r",\s*([}\]])", r"\1", cleaned)
+
+        logger.debug("CV metadata raw LLM response:\n%s", cleaned)
+        data = json.loads(cleaned)
         candidate_name = data.get("candidate_name")
         raw_keywords = data.get("keywords", [])
         keywords = [(str(k[0]), float(k[1])) for k in raw_keywords if len(k) >= 2]

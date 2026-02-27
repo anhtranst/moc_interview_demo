@@ -16,7 +16,7 @@ from livekit.agents import (
     cli,
     metrics,
 )
-from livekit.agents.voice import MetricsCollectedEvent
+from livekit.agents.voice import ConversationItemAddedEvent, MetricsCollectedEvent
 from livekit.plugins import google, openai
 
 from .agents import IntroductionAgent
@@ -59,7 +59,10 @@ async def entrypoint(ctx: JobContext) -> None:
     if interview_code:
         cv_text = load_cv_text(interview_code)
         if cv_text:
-            metadata = await extract_cv_metadata(cv_text, llm)
+            # Use a separate LLM instance with higher token limit for structured
+            # JSON extraction (the conversation LLM is capped at 150 tokens).
+            extraction_llm = openai.LLM(model="gpt-4.1-mini", max_completion_tokens=1024)
+            metadata = await extract_cv_metadata(cv_text, extraction_llm)
             candidate_name = metadata.candidate_name
             stt_keywords = metadata.keywords
 
@@ -94,6 +97,15 @@ async def entrypoint(ctx: JobContext) -> None:
     def _on_metrics_collected(ev: MetricsCollectedEvent) -> None:
         metrics.log_metrics(ev.metrics)
         usage_collector.collect(ev.metrics)
+
+    @session.on("conversation_item_added")
+    def _on_message(ev: ConversationItemAddedEvent) -> None:
+        msg = ev.item
+        if hasattr(msg, "role") and hasattr(msg, "text_content"):
+            text = msg.text_content or ""
+            if text:
+                label = "INTERVIEWER" if msg.role == "assistant" else msg.role.upper()
+                logger.info("[%s] %s", label, text)
 
     async def on_shutdown() -> None:
         summary = usage_collector.get_summary()

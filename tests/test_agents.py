@@ -1,7 +1,5 @@
 """Unit tests for agent construction, instructions, properties, and flow control."""
 
-import pytest
-
 from livekit.agents import ChatContext
 
 from src.agents import (
@@ -13,7 +11,16 @@ from src.agents import (
     build_experience_instructions,
     build_introduction_instructions,
 )
-from src.config import MAX_COMPLETION_TOKENS, MAX_ENDPOINTING_DELAY, MIN_ENDPOINTING_DELAY
+from src.config import (
+    EXPERIENCE_CLOSING_THRESHOLD,
+    EXPERIENCE_GRACE_PERIOD,
+    EXPERIENCE_STAGE_TIMEOUT,
+    MAX_COMPLETION_TOKENS,
+    MAX_ENDPOINTING_DELAY,
+    MAX_EXPERIENCE_TOPICS,
+    MAX_TURNS_PER_TOPIC,
+    MIN_ENDPOINTING_DELAY,
+)
 from src.data import InterviewData
 
 SAMPLE_CV = "John Doe\nSoftware Engineer at Acme Corp\nPython, React, AWS"
@@ -24,9 +31,9 @@ class TestIntroductionAgent:
         agent = IntroductionAgent()
         assert "self-introduction" in agent.instructions.lower()
 
-    def test_no_cv_instructions_ask_for_name(self):
+    def test_no_cv_instructions_greet_with_name(self):
         agent = IntroductionAgent()
-        assert "ask for their name" in agent.instructions.lower()
+        assert "greet the candidate warmly with their name" in agent.instructions.lower()
 
     def test_cv_instructions_greet_by_name(self):
         agent = IntroductionAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
@@ -71,8 +78,8 @@ class TestIntroductionAgent:
         assert "name" in instructions_lower
         assert "current role" in instructions_lower
         assert "background" in instructions_lower
-        # Verify the sequence order: name before role before background
-        name_pos = instructions_lower.index("ask for their name")
+        # Verify the sequence order: greet (name) before role before background
+        name_pos = instructions_lower.index("greet the candidate warmly with their name")
         role_pos = instructions_lower.index("current role")
         background_pos = instructions_lower.index("background or education")
         assert name_pos < role_pos < background_pos
@@ -96,13 +103,50 @@ class TestPastExperienceAgent:
         agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
         assert SAMPLE_CV in agent.instructions
 
-    def test_cv_instructions_mention_targeted_questions(self):
+    def test_cv_instructions_mention_one_at_a_time(self):
         agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
-        assert "targeted" in agent.instructions.lower()
+        assert "one at a time" in agent.instructions.lower()
+
+    def test_instructions_exclude_education(self):
+        agent = PastExperienceAgent()
+        assert "do not ask about education" in agent.instructions.lower()
+
+    def test_cv_instructions_exclude_education(self):
+        agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
+        assert "ignore education" in agent.instructions.lower()
+
+    def test_instructions_limit_followups(self):
+        agent = PastExperienceAgent()
+        assert "up to 2 follow-up" in agent.instructions.lower()
+
+    def test_cv_instructions_limit_followups(self):
+        agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
+        assert "up to 2 follow-up" in agent.instructions.lower()
+
+    def test_instructions_forbid_autonomous_end(self):
+        agent = PastExperienceAgent()
+        assert "do not call end_interview on your own" in agent.instructions.lower()
+
+    def test_instructions_mention_record_experience(self):
+        agent = PastExperienceAgent()
+        assert "record_experience" in agent.instructions.lower()
+
+    def test_cv_instructions_mention_record_experience(self):
+        agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
+        assert "record_experience" in agent.instructions.lower()
+
+    def test_cv_instructions_forbid_autonomous_end(self):
+        agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
+        assert "do not call end_interview on your own" in agent.instructions.lower()
 
     def test_instructions_include_conversation_rules(self):
         agent = PastExperienceAgent()
         assert "1-3 sentences" in agent.instructions
+
+    def test_has_record_experience_tool(self):
+        agent = PastExperienceAgent()
+        tool_ids = [t.id for t in agent.tools]
+        assert "record_experience" in tool_ids
 
     def test_has_end_interview_tool(self):
         agent = PastExperienceAgent()
@@ -120,11 +164,20 @@ class TestPastExperienceAgent:
         agent = PastExperienceAgent()
         assert isinstance(agent, InterviewAgentBase)
 
+    def test_timer_attributes_initially_none(self):
+        agent = PastExperienceAgent()
+        assert agent._closing_task is None
+        assert agent._hard_stop_task is None
+        assert agent._grace_task is None
+        assert agent._time_expired is False
+        assert agent._advance_pending is False
+        assert agent._shutdown_initiated is False
+
 
 class TestInstructionBuilders:
     def test_intro_no_cv_fallback(self):
         result = build_introduction_instructions(None, None)
-        assert "ask for their name" in result.lower()
+        assert "greet the candidate warmly with their name" in result.lower()
         assert result.endswith(CONVERSATION_RULES)
 
     def test_intro_with_cv(self):
@@ -142,7 +195,8 @@ class TestInstructionBuilders:
     def test_experience_with_cv(self):
         result = build_experience_instructions(SAMPLE_CV, "John Doe")
         assert SAMPLE_CV in result
-        assert "targeted" in result.lower()
+        assert "one at a time" in result.lower()
+        assert "do not call end_interview" in result.lower()
         assert result.endswith(CONVERSATION_RULES)
 
     def test_experience_cv_without_name(self):
@@ -160,6 +214,12 @@ class TestInterviewData:
         assert data.cv_text is None
         assert data.stt_keywords == []
 
+    def test_experience_tracking_defaults(self):
+        data = InterviewData()
+        assert data.experience_topics_discussed == 0
+        assert data.current_topic_turns == 0
+        assert data.closing_question_asked is False
+
     def test_fields_are_settable(self):
         data = InterviewData()
         data.candidate_name = "Alice"
@@ -168,6 +228,13 @@ class TestInterviewData:
         assert data.candidate_name == "Alice"
         assert data.introduction_summary == "Software engineer with 5 years experience"
         assert data.transition_source == "tool"
+
+    def test_experience_tracking_fields_settable(self):
+        data = InterviewData()
+        data.experience_topics_discussed = 5
+        data.closing_question_asked = True
+        assert data.experience_topics_discussed == 5
+        assert data.closing_question_asked is True
 
     def test_cv_fields(self):
         data = InterviewData(
@@ -201,6 +268,21 @@ class TestConfig:
     def test_endpointing_delays_are_reasonable(self):
         assert 1.0 <= MIN_ENDPOINTING_DELAY <= 5.0
         assert MAX_ENDPOINTING_DELAY > MIN_ENDPOINTING_DELAY
+
+    def test_experience_stage_timeout_is_reasonable(self):
+        assert 60.0 <= EXPERIENCE_STAGE_TIMEOUT <= 900.0
+
+    def test_experience_closing_threshold_is_fraction(self):
+        assert 0.5 <= EXPERIENCE_CLOSING_THRESHOLD < 1.0
+
+    def test_max_experience_topics_is_positive(self):
+        assert MAX_EXPERIENCE_TOPICS >= 1
+
+    def test_experience_grace_period_is_reasonable(self):
+        assert 10.0 <= EXPERIENCE_GRACE_PERIOD <= 60.0
+
+    def test_max_turns_per_topic_is_reasonable(self):
+        assert 2 <= MAX_TURNS_PER_TOPIC <= 10
 
 
 class TestEntrypointConfig:
