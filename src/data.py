@@ -17,5 +17,3 @@ class InterviewData:
 
     # Experience-stage tracking
     experience_topics_discussed: int = 0
-    current_topic_turns: int = 0
-    closing_question_asked: bool = False

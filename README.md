@@ -37,10 +37,9 @@ flowchart TD
     K --> L
     L -->|on_enter| M[Asks about past experience via TTS]
     M --> N{Discussion continues}
-    N -->|Time or topic limit| Q[System asks 'anything else?']
+    N -->|Time or topic limit| Q[LLM asks 'anything else?']
     Q -->|Candidate responds| R[LLM thanks & calls end_interview]
     R --> O[Goodbye & session close]
-    N -->|Hard stop + grace period| O
 
     F -->|User clicks End Interview| P[Confirmation modal]
     H -->|User clicks End Interview| P
@@ -109,7 +108,7 @@ sequenceDiagram
     end
 
     PA->>U: Tell me about your past experience...
-    Note right of PA: Starts closing timer (80%) + hard stop timer (100%)
+    Note right of PA: Starts wrap-up timer (80%) + farewell timer (100%)
     U->>PA: Describes experience
 
     alt Time or topic trigger
@@ -249,16 +248,14 @@ The first agent greets the candidate and gathers their introduction. If a CV is 
 
 The second agent asks about the candidate's past work experience, projects, and achievements. If a CV is available, it identifies distinct experiences from the CV and asks about up to `MAX_EXPERIENCE_TOPICS` (default: 3) of the most relevant ones. `on_enter()` generates the first experience question for both transition types (tool-based and fallback) with tailored instructions. The IntroductionAgent is instructed NOT to ask experience questions alongside the `proceed_to_experience` tool call — just a brief acknowledgment — so the first experience question comes reliably from `on_enter()`.
 
-Each experience topic is limited to `MAX_TURNS_PER_TOPIC` (default: 3) candidate turns — 1 initial answer + up to 2 follow-ups. After exploring a topic, the LLM calls the `record_experience` tool with a brief summary before moving to the next topic. If the LLM exceeds the turn limit without calling the tool, the system flags a **deferred advance** — it lets the current LLM reply finish naturally, then advances to the next topic on the next candidate turn. This prevents the interviewer from being cut off mid-sentence.
+The LLM drives the entire conversation flow based on comprehensive initial instructions. For each experience topic, it asks an initial question, 1-2 follow-up questions, then calls `record_experience` with a brief summary. After `MAX_EXPERIENCE_TOPICS` topics, the tool tells the LLM to ask the closing question ("anything else to share?"). The LLM then thanks the candidate and calls `end_interview`.
 
-The experience stage ends based on **whichever comes first**:
+**Time awareness via `update_instructions()`**: Two timers use the framework's `update_instructions()` API to append time-awareness notices to the initial instructions:
 
-- **Time trigger**: At 80% of `EXPERIENCE_STAGE_TIMEOUT` (default: 2:24 of 3 min), the system injects an "anything else you'd like to share?" closing question.
-- **Topic trigger**: After the LLM has called `record_experience` for `MAX_EXPERIENCE_TOPICS` (default: 3) distinct experience topics, the tool returns instructions to ask the same closing question.
+- **Wrap-up timer** (80% of `EXPERIENCE_STAGE_TIMEOUT`): Appends "time is running low, finish current topic and start wrapping up"
+- **Farewell timer** (100% of `EXPERIENCE_STAGE_TIMEOUT`): Appends "time has run out, say goodbye and call end_interview"
 
-After the closing question, the candidate can optionally share one more experience before the LLM wraps up.
-
-**Graceful hard stop**: At 100% timeout, the agent waits for the candidate to finish speaking (up to `EXPERIENCE_GRACE_PERIOD` = 30s), then generates a goodbye and shuts down the session directly. If the grace period expires, the agent interrupts politely, apologizes for running out of time, and ends the session. Both paths call `session.shutdown(drain=True)` directly rather than relying on the LLM to call `end_interview`. A `_shutdown_initiated` guard flag prevents duplicate goodbye messages when multiple shutdown paths race.
+No overrides, no turn counting, no manual intervention — the LLM naturally follows its updated instructions on the next turn.
 
 ### Frontend
 
@@ -282,9 +279,7 @@ Both agents share an `InterviewData` dataclass via `AgentSession.userdata`:
 | `transition_source` | `str \| None` | `"tool"` or `"fallback"` — how the transition occurred |
 | `cv_text` | `str \| None` | Raw CV text injected into agent instructions |
 | `stt_keywords` | `list[tuple[str, float]]` | CV-extracted keywords passed to Google STT as phrase hints |
-| `experience_topics_discussed` | `int` | Count of distinct experience topics fully explored (via `record_experience` tool or turn-limit force-advance) |
-| `current_topic_turns` | `int` | Candidate turns on the current topic (reset when topic changes) |
-| `closing_question_asked` | `bool` | Whether the "anything else?" closing question has been asked |
+| `experience_topics_discussed` | `int` | Count of distinct experience topics fully explored (via `record_experience` tool) |
 
 ## Configuration
 
@@ -299,8 +294,6 @@ Configurable constants in `src/config.py`:
 | `EXPERIENCE_STAGE_TIMEOUT` | `180.0` | Total time budget (seconds) for the past-experience stage |
 | `EXPERIENCE_CLOSING_THRESHOLD` | `0.8` | Fraction of timeout at which the "anything else?" closing question fires |
 | `MAX_EXPERIENCE_TOPICS` | `3` | Maximum CV experiences to ask about before the closing question |
-| `MAX_TURNS_PER_TOPIC` | `3` | Maximum candidate turns per topic before force-advancing (1 initial + 2 follow-ups) |
-| `EXPERIENCE_GRACE_PERIOD` | `30.0` | Extra seconds after timeout to let the candidate finish before interrupting |
 
 ## Testing
 

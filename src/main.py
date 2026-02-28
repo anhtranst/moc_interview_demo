@@ -89,6 +89,7 @@ async def entrypoint(ctx: JobContext) -> None:
         turn_detection="stt",
         min_endpointing_delay=MIN_ENDPOINTING_DELAY,
         max_endpointing_delay=MAX_ENDPOINTING_DELAY,
+        discard_audio_if_uninterruptible=False,
     )
 
     usage_collector = metrics.UsageCollector()

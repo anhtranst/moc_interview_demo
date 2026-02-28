@@ -13,12 +13,10 @@ from src.agents import (
 )
 from src.config import (
     EXPERIENCE_CLOSING_THRESHOLD,
-    EXPERIENCE_GRACE_PERIOD,
     EXPERIENCE_STAGE_TIMEOUT,
     MAX_COMPLETION_TOKENS,
     MAX_ENDPOINTING_DELAY,
     MAX_EXPERIENCE_TOPICS,
-    MAX_TURNS_PER_TOPIC,
     MIN_ENDPOINTING_DELAY,
 )
 from src.data import InterviewData
@@ -103,9 +101,9 @@ class TestPastExperienceAgent:
         agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
         assert SAMPLE_CV in agent.instructions
 
-    def test_cv_instructions_mention_one_at_a_time(self):
+    def test_cv_instructions_mention_per_topic_flow(self):
         agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
-        assert "one at a time" in agent.instructions.lower()
+        assert "for each experience topic" in agent.instructions.lower()
 
     def test_instructions_exclude_education(self):
         agent = PastExperienceAgent()
@@ -117,15 +115,15 @@ class TestPastExperienceAgent:
 
     def test_instructions_limit_followups(self):
         agent = PastExperienceAgent()
-        assert "up to 2 follow-up" in agent.instructions.lower()
+        assert "1-2 follow-up" in agent.instructions.lower()
 
     def test_cv_instructions_limit_followups(self):
         agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
-        assert "up to 2 follow-up" in agent.instructions.lower()
+        assert "1-2 follow-up" in agent.instructions.lower()
 
-    def test_instructions_forbid_autonomous_end(self):
+    def test_instructions_mention_end_interview(self):
         agent = PastExperienceAgent()
-        assert "do not call end_interview on your own" in agent.instructions.lower()
+        assert "end_interview" in agent.instructions.lower()
 
     def test_instructions_mention_record_experience(self):
         agent = PastExperienceAgent()
@@ -135,9 +133,9 @@ class TestPastExperienceAgent:
         agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
         assert "record_experience" in agent.instructions.lower()
 
-    def test_cv_instructions_forbid_autonomous_end(self):
+    def test_cv_instructions_mention_end_interview(self):
         agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
-        assert "do not call end_interview on your own" in agent.instructions.lower()
+        assert "end_interview" in agent.instructions.lower()
 
     def test_instructions_include_conversation_rules(self):
         agent = PastExperienceAgent()
@@ -164,14 +162,20 @@ class TestPastExperienceAgent:
         agent = PastExperienceAgent()
         assert isinstance(agent, InterviewAgentBase)
 
+    def test_initial_instructions_stored(self):
+        agent = PastExperienceAgent()
+        assert agent._initial_instructions == agent.instructions
+        assert len(agent._initial_instructions) > 0
+
+    def test_initial_instructions_stored_with_cv(self):
+        agent = PastExperienceAgent(cv_text=SAMPLE_CV, candidate_name="John Doe")
+        assert agent._initial_instructions == agent.instructions
+        assert SAMPLE_CV in agent._initial_instructions
+
     def test_timer_attributes_initially_none(self):
         agent = PastExperienceAgent()
-        assert agent._closing_task is None
-        assert agent._hard_stop_task is None
-        assert agent._grace_task is None
-        assert agent._time_expired is False
-        assert agent._advance_pending is False
-        assert agent._shutdown_initiated is False
+        assert agent._wrap_up_task is None
+        assert agent._farewell_task is None
 
 
 class TestInstructionBuilders:
@@ -195,8 +199,8 @@ class TestInstructionBuilders:
     def test_experience_with_cv(self):
         result = build_experience_instructions(SAMPLE_CV, "John Doe")
         assert SAMPLE_CV in result
-        assert "one at a time" in result.lower()
-        assert "do not call end_interview" in result.lower()
+        assert "for each experience topic" in result.lower()
+        assert "end_interview" in result.lower()
         assert result.endswith(CONVERSATION_RULES)
 
     def test_experience_cv_without_name(self):
@@ -217,8 +221,6 @@ class TestInterviewData:
     def test_experience_tracking_defaults(self):
         data = InterviewData()
         assert data.experience_topics_discussed == 0
-        assert data.current_topic_turns == 0
-        assert data.closing_question_asked is False
 
     def test_fields_are_settable(self):
         data = InterviewData()
@@ -232,9 +234,7 @@ class TestInterviewData:
     def test_experience_tracking_fields_settable(self):
         data = InterviewData()
         data.experience_topics_discussed = 5
-        data.closing_question_asked = True
         assert data.experience_topics_discussed == 5
-        assert data.closing_question_asked is True
 
     def test_cv_fields(self):
         data = InterviewData(
@@ -277,12 +277,6 @@ class TestConfig:
 
     def test_max_experience_topics_is_positive(self):
         assert MAX_EXPERIENCE_TOPICS >= 1
-
-    def test_experience_grace_period_is_reasonable(self):
-        assert 10.0 <= EXPERIENCE_GRACE_PERIOD <= 60.0
-
-    def test_max_turns_per_topic_is_reasonable(self):
-        assert 2 <= MAX_TURNS_PER_TOPIC <= 10
 
 
 class TestEntrypointConfig:

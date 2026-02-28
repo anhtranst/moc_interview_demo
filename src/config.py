@@ -26,11 +26,3 @@ EXPERIENCE_CLOSING_THRESHOLD: float = 0.8
 
 # Maximum number of CV experiences to ask about before the closing question.
 MAX_EXPERIENCE_TOPICS: int = 3
-
-# Maximum candidate turns per experience topic before forcing a move
-# to the next topic (1 initial answer + 2 follow-ups = 3 turns).
-MAX_TURNS_PER_TOPIC: int = 3
-
-# Extra seconds after EXPERIENCE_STAGE_TIMEOUT to let the candidate finish
-# their current turn before the interviewer interrupts politely.
-EXPERIENCE_GRACE_PERIOD: float = 30.0

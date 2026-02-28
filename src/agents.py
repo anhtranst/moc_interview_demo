@@ -1,17 +1,14 @@
 import asyncio
 import logging
-import time
 
 from livekit.agents import Agent, ChatContext, RunContext, StopResponse
 from livekit.agents.llm import ChatMessage, function_tool
 
 from .config import (
     EXPERIENCE_CLOSING_THRESHOLD,
-    EXPERIENCE_GRACE_PERIOD,
     EXPERIENCE_STAGE_TIMEOUT,
     INTRODUCTION_FALLBACK_TIMEOUT,
     MAX_EXPERIENCE_TOPICS,
-    MAX_TURNS_PER_TOPIC,
 )
 from .data import InterviewData
 
@@ -46,8 +43,7 @@ _INTRO_NO_CV = (
     "Once you have gathered all three details (name, current role, and background), "
     "call the proceed_to_experience tool to move to the next stage. "
     "Do NOT call the tool prematurely -- wait until you have all three details. "
-    "When calling the tool, do NOT ask any questions about work experience — "
-    "just briefly acknowledge what they shared. The next stage will ask the questions."
+    "When calling the tool, do NOT say anything. The next stage will ask the questions."
 )
 
 _EXPERIENCE_NO_CV = (
@@ -57,18 +53,18 @@ _EXPERIENCE_NO_CV = (
     "Ask the candidate about their past work experience, projects, "
     "and professional achievements ONE topic at a time. "
     "Do NOT ask about education, degrees, certifications, or skills — "
-    "focus ONLY on jobs, roles, and projects. "
-    "Ask up to 2 follow-up questions to dig deeper "
-    "into each experience, then call record_experience and move to the next one. "
-    "Be conversational and encouraging.\n\n"
-    "After you have fully explored one experience topic (asked your initial "
-    "question and any follow-ups), call the record_experience tool with a brief "
-    "summary before moving to the next topic.\n\n"
-    "IMPORTANT: Do NOT call end_interview on your own initiative. "
-    "The system will tell you when it is time to wrap up. "
-    "When that happens, follow the system's instructions.\n"
-    "When calling end_interview, your text response MUST be a warm goodbye "
-    "thanking the candidate — do NOT ask any questions in the same message."
+    "focus ONLY on jobs, roles, and projects.\n\n"
+    "For each experience topic:\n"
+    "1. Ask an initial question about the role or project\n"
+    "2. Ask 1-2 follow-up questions to dig deeper into their contributions, "
+    "challenges, and impact\n"
+    "3. When you have finished all follow-up questions and are satisfied with"
+    "4. Move on to the next topic\n\n"
+    "After you have covered enough topics (the record_experience tool will "
+    "tell you when), ask the candidate if there is any other meaningful "
+    "experience they would like to share.\n\n"
+    "5. After the candidate has finished sharing additional experience, or says they have no more to share, then call "
+    "end_interview.\n\n"    
 )
 
 
@@ -94,8 +90,7 @@ def build_introduction_instructions(
             "ask a brief follow-up to clarify before moving to the next topic.\n"
             "Once you have discussed their current role and background, "
             "call the proceed_to_experience tool to move to the next stage. "
-            "When calling the tool, do NOT ask any questions about work experience — "
-            "just briefly acknowledge what they shared. The next stage will ask the questions.\n\n"
+            "When calling the tool, do NOT say anything. The next stage will ask the questions.\n\n"
             f"Here is the candidate's CV for reference:\n\n{cv_text}"
         ) + CONVERSATION_RULES
     return _INTRO_NO_CV + CONVERSATION_RULES
@@ -113,18 +108,18 @@ def build_experience_instructions(
             f"{name} has already introduced themselves.\n\n"
             "You have the candidate's CV below. Identify their distinct work experiences "
             "and roles — ignore education, degrees, certifications, and skills sections. "
-            "Select up to the most relevant or interesting ones to ask about. "
-            "Ask about each experience ONE at a time with up to 2 follow-up questions "
-            "to dig deeper into their contributions, challenges, and impact. "
-            "Be conversational and encouraging.\n\n"
-            "After you have fully explored one experience topic (asked your initial "
-            "question and any follow-ups), call the record_experience tool with a brief "
-            "summary before moving to the next topic.\n\n"
-            "IMPORTANT: Do NOT call end_interview on your own initiative. "
-            "The system will tell you when it is time to wrap up. "
-            "When that happens, follow the system's instructions.\n"
-            "When calling end_interview, your text response MUST be a warm goodbye "
-            "thanking the candidate — do NOT ask any questions in the same message.\n\n"
+            "Select up to the most relevant or interesting ones to ask about.\n\n"
+            "For each experience topic:\n"
+            "1. Ask an initial question about the role or project\n"
+            "2. Ask 1-2 follow-up questions to dig deeper into their contributions, "
+            "challenges, and impact\n"
+            "3. When you have finished all follow-up questions and are satisfied with"
+            "4. Move on to the next topic\n\n"
+            "After you have covered enough topics (the record_experience tool will "
+            "tell you when), ask the candidate if there is any other meaningful "
+            "experience they would like to share.\n\n"
+            "5. After the candidate has finished sharing additional experience, or says they have no more to share, then call "
+            "end_interview.\n\n"            
             f"Candidate's CV:\n\n{cv_text}"
         ) + CONVERSATION_RULES
     return _EXPERIENCE_NO_CV + CONVERSATION_RULES
@@ -141,25 +136,6 @@ class InterviewAgentBase(Agent):
     End Interview button in ``on_user_turn_completed``.
     """
 
-    def _generate_override_reply(self, instructions: str, **kwargs) -> None:
-        """Generate a reply using ONLY the given instructions, bypassing base instructions.
-
-        The framework prepends ``self.instructions`` (base agent instructions)
-        to the ``instructions`` parameter of ``generate_reply``.  For timer-
-        based overrides the base instructions dominate and the LLM ignores the
-        override.  This helper temporarily blanks the base instructions so that
-        the LLM sees *only* the override text.
-
-        ``generate_reply`` reads ``self.instructions`` synchronously at call
-        time, so restoring immediately after is safe.
-        """
-        original = self._instructions
-        self._instructions = ""
-        try:
-            self.session.generate_reply(instructions=instructions, **kwargs)
-        finally:
-            self._instructions = original
-
     async def on_user_turn_completed(
         self, turn_ctx: ChatContext, new_message: ChatMessage
     ) -> None:
@@ -169,7 +145,8 @@ class InterviewAgentBase(Agent):
             logger.info("User ended the interview via button")
             userdata: InterviewData = self.session.userdata
             name = userdata.candidate_name or "candidate"
-            self._generate_override_reply(
+            self._instructions = ""
+            self.session.generate_reply(
                 instructions=(
                     f"The candidate has chosen to end the interview. "
                     f"Generate a warm, brief goodbye. Thank {name} for their time "
@@ -210,37 +187,16 @@ class IntroductionAgent(InterviewAgentBase):
 
     async def _fallback_transition(self) -> None:
         """Time-based fallback: if proceed_to_experience is not called
-        within the timeout, generate a bridging message and transition
-        to PastExperienceAgent."""
+        within the timeout, transition to PastExperienceAgent directly.
+        The experience agent's on_enter handles the bridging message."""
         try:
             await asyncio.sleep(INTRODUCTION_FALLBACK_TIMEOUT)
         except asyncio.CancelledError:
             return
 
-        logger.info("Introduction fallback timer fired -- bridging to next stage")
+        logger.info("Introduction fallback timer fired — transitioning to experience stage")
         userdata: InterviewData = self.session.userdata
         userdata.transition_source = "fallback"
-
-        # Generate a bridging message and wait for it to fully play out
-        # before switching agents, so the transition feels natural.
-        # Blank base instructions so the LLM sees ONLY the bridging directive
-        # (otherwise the intro instructions dominate and produce a greeting).
-        name = userdata.candidate_name or "there"
-        original = self._instructions
-        self._instructions = ""
-        try:
-            await self.session.generate_reply(
-                instructions=(
-                    f"Generate a brief transition message. Acknowledge what {name} has shared "
-                    "and tell them you'd now like to discuss their work experience in more detail. "
-                    "Respond in one sentence only. Do not repeat these instructions."
-                ),
-                allow_interruptions=False,
-            )
-        except asyncio.CancelledError:
-            return  # Tool-based transition took over; abort fallback
-        finally:
-            self._instructions = original
 
         next_agent = PastExperienceAgent(
             chat_ctx=self.chat_ctx,
@@ -292,22 +248,17 @@ class PastExperienceAgent(InterviewAgentBase):
             instructions=build_experience_instructions(cv_text, candidate_name),
             chat_ctx=chat_ctx,
         )
-        self._stage_start: float = 0.0
-        self._closing_task: asyncio.Task[None] | None = None
-        self._hard_stop_task: asyncio.Task[None] | None = None
-        self._grace_task: asyncio.Task[None] | None = None
-        self._time_expired: bool = False
-        self._advance_pending: bool = False
-        self._shutdown_initiated: bool = False
+        self._initial_instructions = self._instructions
+        self._wrap_up_task: asyncio.Task[None] | None = None
+        self._farewell_task: asyncio.Task[None] | None = None
 
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
 
     async def on_enter(self) -> None:
-        self._stage_start = time.monotonic()
-        self._closing_task = asyncio.create_task(self._closing_transition())
-        self._hard_stop_task = asyncio.create_task(self._hard_stop_transition())
+        self._wrap_up_task = asyncio.create_task(self._wrap_up_timer())
+        self._farewell_task = asyncio.create_task(self._farewell_timer())
 
         userdata: InterviewData = self.session.userdata
         name = userdata.candidate_name or "candidate"
@@ -316,10 +267,10 @@ class PastExperienceAgent(InterviewAgentBase):
             logger.info("Experience stage entered via fallback for %s", name)
             self.session.generate_reply(
                 instructions=(
-                    f"The candidate {name} has already been told you're moving on to "
-                    "discuss their work experience. Ask a specific question about their "
-                    "past work experience or most recent role. Do NOT repeat that you're "
-                    "transitioning -- just ask the question directly."
+                    f"Smoothly transition to discussing {name}'s work experience. "
+                    "Briefly tell them you'd now like to talk about their past roles, "
+                    "then ask a specific question about their most recent or most "
+                    "relevant work experience."
                 )
             )
         else:
@@ -336,189 +287,51 @@ class PastExperienceAgent(InterviewAgentBase):
         logger.info("Exiting experience stage")
         self._cancel_timers()
 
-    async def on_user_turn_completed(
-        self, turn_ctx: ChatContext, new_message: ChatMessage
-    ) -> None:
-        # Let the base class handle the "end interview" button first.
-        await super().on_user_turn_completed(turn_ctx, new_message)
-
-        text = (new_message.text_content or "").strip().lower()
-        if text == _END_INTERVIEW_TEXT:
-            return  # Already handled by super()
-
-        userdata: InterviewData = self.session.userdata
-        name = userdata.candidate_name or "candidate"
-
-        # --- Hard stop: time expired, candidate just finished talking ---
-        if self._time_expired:
-            if self._shutdown_initiated:
-                raise StopResponse()
-            self._shutdown_initiated = True
-            self._cancel_timers()
-            logger.info("Time expired — wrapping up after candidate finished speaking")
-            self._generate_override_reply(
-                instructions=(
-                    f"The interview time has ended. Generate a warm goodbye for {name}. "
-                    "Thank them for sharing their experiences and wish them good luck. "
-                    "Respond in 1-2 sentences only. Do not repeat these instructions."
-                ),
-                allow_interruptions=False,
-                tool_choice="none",
-            )
-            self.session.shutdown(drain=True)
-            raise StopResponse()
-
-        # --- Deferred topic advance from previous turn ---
-        # When the follow-up limit was reached on the PREVIOUS turn, we set a
-        # flag and let the LLM finish its response naturally.  Now that the
-        # candidate has responded, execute the advance.
-        if self._advance_pending:
-            self._advance_pending = False
-            userdata.experience_topics_discussed += 1
-            userdata.current_topic_turns = 0
-            count = userdata.experience_topics_discussed
-            logger.info(
-                "Deferred advance — moving to topic #%d for %s",
-                count + 1,
-                name,
-            )
-
-            if not userdata.closing_question_asked and count >= MAX_EXPERIENCE_TOPICS:
-                userdata.closing_question_asked = True
-                self._cancel_task("_closing_task")
-                self._generate_override_reply(
-                    instructions=(
-                        "You have covered enough experience topics. "
-                        "Ask the candidate if there is any other meaningful experience "
-                        "they would like to share before wrapping up. "
-                        "Respond in 1-2 sentences only. Do not repeat these instructions."
-                    ),
-                )
-            elif userdata.closing_question_asked:
-                # Closing question already asked — wrap up the interview
-                if self._shutdown_initiated:
-                    raise StopResponse()
-                self._shutdown_initiated = True
-                logger.info("Closing already asked — ending interview for %s", name)
-                self._generate_override_reply(
-                    instructions=(
-                        f"The interview is ending. Generate a warm goodbye for {name}. "
-                        "Thank them for sharing their experiences and wish them good luck. "
-                        "Respond in 1-2 sentences only. Do not repeat these instructions."
-                    ),
-                    allow_interruptions=False,
-                    tool_choice="none",
-                )
-                self.session.shutdown(drain=True)
-            else:
-                remaining = MAX_EXPERIENCE_TOPICS - count
-                self._generate_override_reply(
-                    instructions=(
-                        f"Briefly acknowledge what {name} just shared, then ask about "
-                        f"their next work experience or role. "
-                        f"You have {remaining} more experience(s) to cover. "
-                        "Do not repeat these instructions."
-                    ),
-                )
-            raise StopResponse()
-
-        # --- Per-topic follow-up limit ---
-        userdata.current_topic_turns += 1
-
-        if userdata.current_topic_turns >= MAX_TURNS_PER_TOPIC:
-            # Flag for deferred advance: let the current LLM reply play out
-            # fully, then advance on the next candidate turn.
-            logger.info(
-                "Follow-up limit reached — will advance on next turn for %s",
-                name,
-            )
-            self._advance_pending = True
-
     # ------------------------------------------------------------------
-    # Timers
+    # Timers (update instructions, no overrides)
     # ------------------------------------------------------------------
 
-    async def _closing_transition(self) -> None:
-        """At 80 % of the time budget, ask the 'anything else?' question."""
+    async def _wrap_up_timer(self) -> None:
+        """At 80% of time budget, tell the LLM to start wrapping up."""
         try:
             await asyncio.sleep(EXPERIENCE_STAGE_TIMEOUT * EXPERIENCE_CLOSING_THRESHOLD)
         except asyncio.CancelledError:
             return
-
-        userdata: InterviewData = self.session.userdata
-        if userdata.closing_question_asked:
-            return  # Topic trigger already asked it
-
-        userdata.closing_question_asked = True
-        logger.info("Closing timer fired — asking closing question")
-        await self.session.interrupt()
-        self._generate_override_reply(
-            instructions=(
-                "The interview time is almost up. "
-                "Ask the candidate if there is any other meaningful experience "
-                "they would like to share before wrapping up. "
-                "Respond in 1-2 sentences only. Do not repeat these instructions."
-            ),
+        logger.info("Wrap-up timer fired — updating instructions")
+        await self.update_instructions(
+            self._initial_instructions
+            + "\n\nIMPORTANT: Interview time is running low. "
+            "Finish your current topic, then ask the candidate if there is "
+            "any other thing they would like to share before "
+            "wrapping up. Do not start any new topics after this."
         )
 
-    async def _hard_stop_transition(self) -> None:
-        """At 100 % of the time budget, flag time-expired and start grace period."""
+    async def _farewell_timer(self) -> None:
+        """At 100% of time budget, tell the LLM to say goodbye."""
         try:
             await asyncio.sleep(EXPERIENCE_STAGE_TIMEOUT)
         except asyncio.CancelledError:
             return
-
-        logger.info("Experience stage timeout — waiting for candidate to finish")
-        self._time_expired = True
-        self._grace_task = asyncio.create_task(self._grace_expired())
-
-    async def _grace_expired(self) -> None:
-        """If the candidate is still talking after the grace period, interrupt."""
-        try:
-            await asyncio.sleep(EXPERIENCE_GRACE_PERIOD)
-        except asyncio.CancelledError:
-            return
-
-        userdata: InterviewData = self.session.userdata
-        name = userdata.candidate_name or "candidate"
-        logger.info("Grace period expired — interrupting politely")
-
-        try:
-            await self.session.interrupt()
-        except asyncio.CancelledError:
-            return
-
-        if self._shutdown_initiated:
-            return
-        self._shutdown_initiated = True
-
-        self._generate_override_reply(
-            instructions=(
-                f"The interview time has run out. Generate a warm goodbye for {name}. "
-                "Apologize briefly for the interruption, thank them for sharing their "
-                "experiences, and wish them good luck. "
-                "Respond in 1-2 sentences only. Do not repeat these instructions."
-            ),
-            allow_interruptions=False,
-            tool_choice="none",
+        logger.info("Farewell timer fired — updating instructions")
+        await self.update_instructions(
+            self._initial_instructions
+            + "\n\nURGENT: Interview time has run out. "
+            "On your very next response, thank the candidate warmly for "
+            "sharing their experiences, wish them good luck, and call "
+            "end_interview. Do not ask any more questions."
         )
-        self.session.shutdown(drain=True)
 
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
-    def _cancel_task(self, attr: str) -> None:
-        """Cancel a single timer task by attribute name."""
-        task: asyncio.Task[None] | None = getattr(self, attr, None)
-        if task is not None and not task.done():
-            task.cancel()
-        setattr(self, attr, None)
-
     def _cancel_timers(self) -> None:
         """Cancel all pending timer tasks."""
-        for attr in ("_closing_task", "_hard_stop_task", "_grace_task"):
-            self._cancel_task(attr)
+        for attr in ("_wrap_up_task", "_farewell_task"):
+            task = getattr(self, attr, None)
+            if task is not None and not task.done():
+                task.cancel()
+            setattr(self, attr, None)
 
     # ------------------------------------------------------------------
     # Tools
@@ -528,38 +341,38 @@ class PastExperienceAgent(InterviewAgentBase):
     async def record_experience(
         self, context: RunContext[InterviewData], topic_summary: str
     ) -> str:
-        """Call this after you have finished exploring one experience topic
-        (initial question + any follow-ups). Do NOT call this mid-discussion.
+        """Call after the candidate has answered all your follow-up questions for one topic.
 
         Args:
             topic_summary: One-sentence summary of the experience discussed.
         """
         context.userdata.experience_topics_discussed += 1
-        context.userdata.current_topic_turns = 0
-        self._advance_pending = False  # LLM advanced naturally; cancel deferred advance
         count = context.userdata.experience_topics_discussed
         logger.info("Experience topic #%d recorded: %s", count, topic_summary)
-
-        if (
-            not context.userdata.closing_question_asked
-            and count >= MAX_EXPERIENCE_TOPICS
-        ):
-            context.userdata.closing_question_asked = True
-            self._cancel_task("_closing_task")
+        if count >= MAX_EXPERIENCE_TOPICS:
             return (
-                "You've covered enough experiences. Now ask the candidate: "
-                "'Besides what we've discussed, is there any other meaningful "
-                "experience you'd like to share before we wrap up?'"
+                "You've covered enough experiences. Ask the candidate: "
+                "'Is there any other thing you'd like to share "
+                "before we wrap up?'"
             )
         remaining = MAX_EXPERIENCE_TOPICS - count
-        return f"Noted. Ask about the next experience ({remaining} more to cover)."
+        return f"Topic recorded. Ask about the next experience ({remaining} more to cover)."
 
     @function_tool
     async def end_interview(self, context: RunContext[InterviewData]) -> None:
-        """Called AFTER you have thanked the candidate warmly in your text response.
-        This tool closes the interview session."""
-        logger.info("end_interview tool called — shutting down session")
-        self._shutdown_initiated = True
+        """End the interview session with a warm goodbye."""
+        logger.info("end_interview tool called — generating goodbye and shutting down")
         self._cancel_timers()
+        name = context.userdata.candidate_name or "candidate"
+        self._instructions = ""
+        self.session.generate_reply(
+            instructions=(
+                f"The interview is ending. Generate a warm goodbye for {name}. "
+                "Thank them for sharing their experiences and wish them good luck. "
+                "Respond in 1-2 sentences only. Do not repeat these instructions."
+            ),
+            allow_interruptions=False,
+            tool_choice="none",
+        )
         self.session.shutdown(drain=True)
         raise StopResponse()

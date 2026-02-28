@@ -102,111 +102,57 @@ class TestFallbackBridgingMessage:
         assert name == "Alice"
 
 
-class TestExperienceTimers:
-    def test_cancel_timers_helper(self):
-        """_cancel_timers cancels all pending timer tasks."""
+class TestNewTimerAttributes:
+    def test_initial_instructions_stored(self):
+        """_initial_instructions is set to the initial instructions on construction."""
         agent = PastExperienceAgent()
-        agent._closing_task = asyncio.get_event_loop().create_future()
-        agent._hard_stop_task = asyncio.get_event_loop().create_future()
-        agent._grace_task = asyncio.get_event_loop().create_future()
+        assert agent._initial_instructions == agent.instructions
+        assert len(agent._initial_instructions) > 0
 
-        agent._cancel_timers()
+    def test_initial_instructions_stored_with_cv(self):
+        """_initial_instructions includes CV text when provided."""
+        agent = PastExperienceAgent(cv_text="CV text here", candidate_name="Alice")
+        assert "CV text here" in agent._initial_instructions
 
-        assert agent._closing_task is None
-        assert agent._hard_stop_task is None
-        assert agent._grace_task is None
+    def test_wrap_up_and_farewell_tasks_initially_none(self):
+        """Timer tasks start as None before on_enter."""
+        agent = PastExperienceAgent()
+        assert agent._wrap_up_task is None
+        assert agent._farewell_task is None
 
     def test_cancel_timers_with_none_tasks(self):
         """_cancel_timers is safe when tasks are already None."""
         agent = PastExperienceAgent()
         agent._cancel_timers()  # Should not raise
+        assert agent._wrap_up_task is None
+        assert agent._farewell_task is None
 
-        assert agent._closing_task is None
-        assert agent._hard_stop_task is None
-        assert agent._grace_task is None
+    def test_cancel_timers_cancels_pending_tasks(self):
+        """_cancel_timers cancels all pending timer tasks."""
+        agent = PastExperienceAgent()
+        agent._wrap_up_task = asyncio.get_event_loop().create_future()
+        agent._farewell_task = asyncio.get_event_loop().create_future()
 
+        agent._cancel_timers()
 
-class TestOverrideReply:
-    def test_override_blanks_and_restores_instructions(self):
-        """_generate_override_reply temporarily blanks base instructions via _instructions."""
-        agent = IntroductionAgent()
-        original = agent.instructions
-        assert len(original) > 0
+        assert agent._wrap_up_task is None
+        assert agent._farewell_task is None
 
-        # Cannot call _generate_override_reply without a session, but we can
-        # verify the pattern by checking that _instructions is directly writable
-        # (the public property is read-only; the helper uses _instructions).
-        agent._instructions = ""
-        assert agent.instructions == ""
-        agent._instructions = original
-        assert agent.instructions == original
-
-    def test_override_exists_on_both_agents(self):
-        """Both agent classes inherit _generate_override_reply."""
-        intro = IntroductionAgent()
-        exp = PastExperienceAgent()
-        assert hasattr(intro, "_generate_override_reply")
-        assert hasattr(exp, "_generate_override_reply")
+    def test_no_old_attributes(self):
+        """PastExperienceAgent no longer has old override attributes."""
+        agent = PastExperienceAgent()
+        assert not hasattr(agent, "_closing_pending")
+        assert not hasattr(agent, "_time_expired")
+        assert not hasattr(agent, "_shutdown_initiated")
+        assert not hasattr(agent, "_base_instructions")
+        assert not hasattr(agent, "_grace_task")
 
 
-class TestExperienceUserdataTracking:
+class TestExperienceTopicsTracking:
     def test_experience_topics_discussed_increments(self):
-        """experience_topics_discussed tracks candidate turns."""
+        """experience_topics_discussed tracks recorded topics."""
         data = InterviewData()
         assert data.experience_topics_discussed == 0
         data.experience_topics_discussed += 1
         data.experience_topics_discussed += 1
         assert data.experience_topics_discussed == 2
-
-    def test_closing_question_flag(self):
-        """closing_question_asked prevents duplicate closing questions."""
-        data = InterviewData()
-        assert data.closing_question_asked is False
-        data.closing_question_asked = True
-        assert data.closing_question_asked is True
-
-
-class TestPerTopicTurnLimit:
-    def test_current_topic_turns_default_zero(self):
-        """current_topic_turns starts at 0."""
-        data = InterviewData()
-        assert data.current_topic_turns == 0
-
-    def test_current_topic_turns_increments(self):
-        """current_topic_turns counts candidate responses within a topic."""
-        data = InterviewData()
-        data.current_topic_turns += 1
-        data.current_topic_turns += 1
-        data.current_topic_turns += 1
-        assert data.current_topic_turns == 3
-
-    def test_current_topic_turns_resets_on_topic_change(self):
-        """current_topic_turns resets to 0 when a new topic starts."""
-        data = InterviewData()
-        data.current_topic_turns = 3
-        data.experience_topics_discussed += 1
-        data.current_topic_turns = 0
-        assert data.current_topic_turns == 0
-        assert data.experience_topics_discussed == 1
-
-
-class TestDeferredTopicAdvance:
-    def test_advance_pending_default_false(self):
-        """_advance_pending starts as False."""
-        agent = PastExperienceAgent()
-        assert agent._advance_pending is False
-
-    def test_advance_pending_is_settable(self):
-        """_advance_pending can be set to True to schedule a deferred advance."""
-        agent = PastExperienceAgent()
-        agent._advance_pending = True
-        assert agent._advance_pending is True
-
-    def test_advance_pending_cleared_on_natural_advance(self):
-        """If the LLM calls record_experience, _advance_pending should be
-        cleared to avoid double-incrementing experience_topics_discussed."""
-        agent = PastExperienceAgent()
-        agent._advance_pending = True
-        # Simulate what record_experience does:
-        agent._advance_pending = False
-        assert agent._advance_pending is False
